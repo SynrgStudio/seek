@@ -457,6 +457,15 @@ check("cache: ignored still walks the folder", "c2.txt" in out and "from Seek's 
 out = subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace")
 check("status: the background process answers", "background process" in out and "calls served" in out and "Index:" in out and "Drive watchers: on" in out, out)
 check("status: the folders in memory are listed", "Folders in memory for grep:" in out and "\n  " + L + "  " in out and "files," in out, out)
+check("status: what the start found in the change journals", CI or "Made while no background process watched" in out, out)
+
+
+# ---- made while no background process ran (an update, a restart): found from the drive's change journal at the next start
+subprocess.run([EXE, "--stop"], timeout=60)
+put("journal/made_while_stopped_qz.txt", "made while nothing watched\n")
+time.sleep(0.5)
+code, out = cli("find", {"query": "made_while_stopped_qz"}, via="--call")
+check("find: a file made while no background process ran is found at its next start", "journal\\made_while_stopped_qz.txt" in out, out)
 
 
 # ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside

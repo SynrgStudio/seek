@@ -366,7 +366,7 @@ seek --stop                                         <span class="c">stop the bac
   <li>Windows only, fixed drives. Network shares and other drives can still be searched by giving their folder as <code>path</code>: they are walked instead.</li>
   <li><code>regex</code> uses the C++ standard library's engine. It is correct but much slower than ripgrep's, and it looks only at the first 4,096 characters of very long lines.</li>
   <li>Without Jolt, the first index of a big drive takes a while, longer on a hard disk. Searches below a folder work right away, by walking it.</li>
-  <li><code>recent</code> knows what changed while Seek was running, plus the dates on disk when given a <code>path</code>.</li>
+  <li><code>recent</code> knows what changed while Seek was running, plus what the drives' change journals still held when it started (hours of changes on a busy drive, days on a quiet one), and the dates on disk when given a <code>path</code>.</li>
   <li>Not yet: reading the file table directly for an instant first index, ranking by git status, a search for definitions, and a signed executable.</li>
 </ul>
 

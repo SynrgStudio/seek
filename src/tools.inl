@@ -60,6 +60,11 @@ bool WaitIndex(int ms) {
     return g_indexReady;
 }
 
+// Right after the background process starts, it reads what was made while none watched: a search waits for that.
+void WaitCatchUp(int ms) {
+    for (int waited = 0; g_catchingUp && waited < ms; waited += 50) Sleep(50);
+}
+
 // While a drive is indexed for the first time (without Jolt), its names are missing from searches on all drives.
 std::wstring IndexingNote() {
     const uint32_t mask = g_indexing;
@@ -126,6 +131,7 @@ ToolOut ToolFind(const Json& a) {
         if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
     // a folder doesn't need the index: one on a drive without it yet is walked
     if (!WaitIndex(scope.empty() ? 30000 : 3000) && scope.empty()) return {L"The drive index is still loading. Try again in a few seconds.", true};
+    WaitCatchUp(10000);
     const std::wstring building = scope.empty() ? IndexingNote() : L"";
     LoadUsage();
     std::vector<AddedItem> added;  // what was created since the index was taken: below the folder, when there is one
@@ -617,6 +623,7 @@ ToolOut ToolRecent(const Json& a) {
     const bool system = ArgBool(a, "include_system", false);
     const std::wstring scopeKey = Key(scope);
     LoadUsage();
+    WaitCatchUp(10000);
     struct Item {
         std::wstring path;
         int64_t time;
@@ -690,7 +697,7 @@ ToolOut ToolRecent(const Json& a) {
     notes += walked ? L"; dates read from disk" + std::wstring(walkCut ? L" for part of the folder, it is big" : L"") + L")" : L")";
     if (!shown)
         return {head + L": nothing. " + notes + L"\n" +
-                (scope.empty() ? L"Seek only knows what changed while it was running. Pass path to read dates from disk.\n" : L"")};
+                (scope.empty() ? L"Seek knows what changed while it was running, and what the drives' change journals held when it started. Pass path to read dates from disk.\n" : L"")};
     std::wstring tail;
     if (v.size() > static_cast<size_t>(shown)) tail = L"(more: raise limit, narrow with query or path.)\n";
     if (!system) tail += L"System places (AppData, Windows, Program Files, temp, caches) and what .gitignore leaves out are left out; include_system shows them.\n";
@@ -728,6 +735,13 @@ std::wstring StatusText() {
                L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go. Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
                DateText(g_actSince) + L", saved to activity.txt every 5 min.\n";
     }
+    std::wstring caught;
+    for (const wchar_t c : drives)
+        if (const int64_t from = g_journalFrom[c - L'A'])
+            caught += std::wstring(caught.empty() ? L"" : L", ") + c + L": " + Thousands(g_caughtUp[c - L'A']) + L" (it goes back to " + DateText(from) + L")";
+    out += g_catchingUp ? L"Catching up with what was made while no background process watched, from the drives' change journals.\n"
+           : caught.empty() ? L""
+                            : L"Made while no background process watched, found at its start in the drives' change journals: " + caught + L".\n";
     std::wstring watching, missing, lost;
     for (const wchar_t c : drives) {
         ((g_watchAlive & (1u << (c - L'A'))) ? watching : missing) += std::wstring(1, c) + L": ";

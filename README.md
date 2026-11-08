@@ -159,7 +159,7 @@ Releases are built and tested by GitHub Actions from the tagged commit, and publ
 - **Windows only, fixed drives.** Network shares and other drives can still be searched by giving their folder as `path`: they are walked instead.
 - **`regex` is slower than ripgrep's.** It uses the C++ standard library's engine, which is correct but much slower, and it looks at the first 4,096 characters of very long lines.
 - **The first index takes a while without Jolt** on a big drive, longer on a hard disk. Searches below a folder work right away meanwhile, by walking it.
-- **`recent` knows what changed while Seek was running,** plus the dates on disk when given a `path`.
+- **`recent` knows what changed while Seek was running,** plus what the drives' change journals still held when it started (hours of changes on a busy drive, days on a quiet one), and the dates on disk when given a `path`.
 
 ## License
 

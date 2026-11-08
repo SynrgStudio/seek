@@ -8,6 +8,7 @@
 // is logged for the user to see. See README.md and https://seek.synrgs.tech.
 
 #include <windows.h>
+#include <winioctl.h>
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <sddl.h>
@@ -63,7 +64,7 @@ int wmain(int argc, wchar_t** argv) {
         if (a == L"--daemon") return DaemonMain();
         if (a == L"--cli") return CliMain(argc, argv, false);
         if (a == L"--call") return CliMain(argc, argv, true);
-        if (a == L"--stop") return StopMain();
+        if (a == L"--stop") return StopMain(argc, argv);
         if (a == L"--status") return StatusMain();
         if (a == L"--reindex") return ReindexMain(argc, argv);
         if (a == L"--version") {
@@ -76,7 +77,7 @@ int wmain(int argc, wchar_t** argv) {
                   L"  seek                         MCP server: what an agent runs\n"
                   L"  seek --cli <tool> [json]     run a tool here: find, grep or recent\n"
                   L"  seek --call <tool> [json]    the same, through the shared background process\n"
-                  L"  seek --stop                  stop the background process\n"
+                  L"  seek --stop [here]           stop the background process (here: only if it runs from this file)\n"
                   L"  seek --status                how it is: indexes, watchers, folders in memory\n"
                   L"  seek --reindex [C D ...]     walk the drives again now (only where Jolt's index isn't used)\n"
                   L"  seek --version\n"

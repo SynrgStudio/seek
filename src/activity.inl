@@ -62,16 +62,18 @@ void AddedWalk(const std::wstring& root) {
     PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
 }
 
-void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
+// Records a change. Returns whether it made a name known as made since the index that wasn't known before.
+bool ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
     const std::wstring key = Key(path);
-    if (Private(key) || IsUnder(key, Key(DataDir()))) return;
+    if (Private(key) || IsUnder(key, Key(DataDir()))) return false;
     bool dir = false;
     if (kind == kCreated || kind == kRenamed) {
         const DWORD a = GetFileAttributesW(path.c_str());
-        if (a == INVALID_FILE_ATTRIBUTES) return;  // already gone
+        if (a == INVALID_FILE_ATTRIBUTES) return false;  // already gone
         dir = (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
     const int64_t t = when ? when : NowFt();
+    bool fresh = false;
     {
         std::lock_guard lk(g_actM);
         if (kind == kDeleted) {
@@ -93,6 +95,7 @@ void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
             g_act[key] = {path, t, kind};
             g_removed.erase(key);
             if (kind == kCreated || kind == kRenamed) {
+                fresh = !g_added.count(key);
                 g_added[key] = {path, dir, key, t};
                 PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
             }
@@ -100,6 +103,7 @@ void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
         PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });
     }
     if (kind == kRenamed && dir) std::thread(AddedWalk, path).detach();  // what is inside came along, unseen
+    return fresh;
 }
 
 // A drive has a newer index: it holds what was created on the drive before it was taken, and no longer what was
@@ -171,6 +175,95 @@ void ActWatchMissing() {
 void ActStartWatching() {
     if (g_watching.exchange(true)) return;
     ActWatchMissing();
+}
+
+// ---- catching up: what was made while no background process watched (an update, a restart, before the first agent
+// called after logging in). NTFS keeps a journal of the changes on each drive, which a process without special rights
+// can read from a handle to the drive's root: without names, but with the file's id, which gives its path now.
+
+#ifndef FSCTL_READ_UNPRIVILEGED_USN_JOURNAL
+#define FSCTL_READ_UNPRIVILEGED_USN_JOURNAL CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 234, METHOD_NEITHER, FILE_ANY_ACCESS)
+#endif
+
+std::atomic<uint64_t> g_caughtUp[26];   // per drive: names found made while Seek wasn't watching
+std::atomic<int64_t> g_journalFrom[26];  // the oldest change its journal still had
+std::atomic<bool> g_catchingUp{false};
+
+// Reads the drive's journal for what was made or renamed since `since` and is still there, and records it as made
+// since the index. Within a time budget.
+void CatchUp(wchar_t letter, int64_t since) {
+    const std::wstring root = std::wstring(1, letter) + L":\\";
+    HANDLE vol = CreateFileW(root.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (vol == INVALID_HANDLE_VALUE) return;
+    USN_JOURNAL_DATA_V0 jd{};
+    DWORD got = 0;
+    if (!DeviceIoControl(vol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0, &jd, sizeof(jd), &got, nullptr)) {  // not NTFS, or no journal
+        CloseHandle(vol);
+        return;
+    }
+    struct State {
+        bool there = false, renamed = false;
+        int64_t time = 0;
+    };
+    std::unordered_map<DWORDLONG, State> files;  // by file id: its last state in the journal
+    READ_USN_JOURNAL_DATA_V1 rd{};
+    rd.StartUsn = jd.FirstUsn;
+    rd.ReasonMask = USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE | USN_REASON_RENAME_NEW_NAME;
+    rd.UsnJournalID = jd.UsnJournalID;
+    rd.MinMajorVersion = rd.MaxMajorVersion = 2;
+    std::vector<DWORDLONG> buf(8192);  // 64 KB, aligned for the records
+    const auto* bytes = reinterpret_cast<const BYTE*>(buf.data());
+    const uint64_t deadline = GetTickCount64() + 30000;
+    int64_t oldest = 0;
+    while (GetTickCount64() < deadline && files.size() < 300000) {
+        if (!DeviceIoControl(vol, FSCTL_READ_UNPRIVILEGED_USN_JOURNAL, &rd, sizeof(rd), buf.data(), static_cast<DWORD>(buf.size() * sizeof(DWORDLONG)), &got,
+                             nullptr) ||
+            got <= sizeof(USN))
+            break;
+        for (DWORD off = sizeof(USN); off + sizeof(USN_RECORD_V2) <= got;) {
+            const auto* r = reinterpret_cast<const USN_RECORD_V2*>(bytes + off);
+            if (r->RecordLength == 0) break;
+            if (!oldest) oldest = r->TimeStamp.QuadPart;
+            if (r->MajorVersion == 2 && r->TimeStamp.QuadPart > since) {
+                State& s = files[r->FileReferenceNumber];
+                if (r->Reason & USN_REASON_FILE_DELETE) {
+                    s.there = false;
+                } else {
+                    s.there = true;
+                    s.renamed = s.renamed || (r->Reason & USN_REASON_RENAME_NEW_NAME);
+                    s.time = r->TimeStamp.QuadPart;
+                }
+            }
+            off += r->RecordLength;
+        }
+        const USN next = *reinterpret_cast<const USN*>(bytes);
+        if (next == rd.StartUsn) break;
+        rd.StartUsn = next;
+    }
+    g_journalFrom[letter - L'A'] = oldest;
+    uint64_t found = 0;
+    std::vector<std::wstring> renamedDirs;
+    for (const auto& [id, s] : files) {
+        if (!s.there || GetTickCount64() > deadline) continue;
+        FILE_ID_DESCRIPTOR fid{sizeof(FILE_ID_DESCRIPTOR)};
+        fid.Type = FileIdType;
+        fid.FileId.QuadPart = static_cast<LONGLONG>(id);
+        HANDLE h = OpenFileById(vol, &fid, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, FILE_FLAG_BACKUP_SEMANTICS);
+        if (h == INVALID_HANDLE_VALUE) continue;  // gone since, or its id was taken again
+        wchar_t p[2048];
+        const DWORD n = GetFinalPathNameByHandleW(h, p, 2048, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        CloseHandle(h);
+        if (!n || n >= 2048) continue;
+        std::wstring path(p, n);
+        if (path.rfind(L"\\\\?\\", 0) == 0) path.erase(0, 4);
+        if (path.size() < 3 || path[1] != L':') continue;
+        found += ActRecord(path, kCreated, s.time);
+        const DWORD at = s.renamed ? GetFileAttributesW(path.c_str()) : INVALID_FILE_ATTRIBUTES;
+        if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY)) renamedDirs.push_back(path);  // what is inside came along without records of its own
+    }
+    CloseHandle(vol);
+    for (const std::wstring& d : renamedDirs) AddedWalk(d);
+    g_caughtUp[letter - L'A'] = found;
 }
 
 // ---- kept between runs

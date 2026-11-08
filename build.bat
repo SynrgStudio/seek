@@ -1,10 +1,10 @@
 @echo off
 setlocal
-rem Builds Seek (build\seek.exe) with Visual Studio's C++ compiler. Stops its background process first, so the
-rem executable can be replaced.
+rem Builds Seek (build\seek.exe) with Visual Studio's C++ compiler. Stops a background process running from
+rem build\seek.exe first, so the executable can be replaced; one running from elsewhere (the installed Seek) goes on.
 cd /d "%~dp0"
 if not exist build mkdir build
-if exist build\seek.exe build\seek.exe --stop
+if exist build\seek.exe build\seek.exe --stop here
 
 rem the compiler's environment, unless this console already has it
 where cl >nul 2>nul && goto env_ok

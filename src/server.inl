@@ -101,9 +101,15 @@ void LoadEverything(bool build) {
     std::array<int64_t, 26> stamps{};  // when each drive's index was taken; 0 for a drive without one
     for (const auto& v : Volumes()) stamps[static_cast<size_t>(towupper(v->letter) - L'A')] = v->stamp;
     ActLoad(stamps);
+    if (build) g_catchingUp = true;  // before searches start: the first find waits for it
     g_indexReady = true;  // drives without an index are searched as soon as theirs is built
-    if (build)
-        for (wchar_t c : missing) LoadVolume(c, true);
+    if (!build) return;
+    // what was made while no background process watched, from each drive's change journal (with a margin, since an
+    // index takes a while to make)
+    for (wchar_t c : drives)
+        if (const int64_t s = stamps[static_cast<size_t>(c - L'A')]) CatchUp(c, s - 15 * kMinute);
+    g_catchingUp = false;
+    for (wchar_t c : missing) LoadVolume(c, true);
 }
 
 // "0.2.1" at the start of a build string ("0.2.1 Nov  8 2026 03:08:40"), as numbers.
@@ -122,14 +128,19 @@ std::string ToolsLine() {
     return tools;
 }
 
+std::wstring ExePath();
+
 void Serve(HANDLE pipe) {
     std::string req;
     while (ReadFrame(pipe, req)) {
         Json j;
         std::string reply;
+        const Json* exe = nullptr;
         if (!JsonParse(req, j)) {
             reply = R"({"text":"Bad request","error":true})";
-        } else if (const Json* tool = j.at("tool"); tool && tool->s == "__status") {  // seek --status, from any build
+        } else if (const Json* tool = j.at("tool"); tool && tool->s == "__stop" && (exe = j.at("exe")) && Key(Wide(exe->s)) != Key(ExePath())) {
+            reply = R"({"text":"not this one"})";  // seek --stop here, from another seek.exe (a build): this one keeps running
+        } else if (tool && tool->s == "__status") {  // seek --status, from any build
             reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
         } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
             reply = "{\"tools\":" + ToolsLine() + "}";
@@ -576,13 +587,17 @@ int StatusMain() {
     return 0;
 }
 
-int StopMain() {
+// seek --stop: stops the background process. seek --stop here: only when it runs from this seek.exe, which is about to
+// be replaced (build.bat), so that building Seek doesn't stop the installed one, and with it what the watchers see.
+int StopMain(int argc, wchar_t** argv) {
+    const bool here = argc >= 3 && std::wstring(argv[2]) == L"here";
     HANDLE h = ConnectDaemon(0);
     if (!h) return 0;
     std::string reply;
-    WriteFrame(h, "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":\"__stop\"}");
+    WriteFrame(h, "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":\"__stop\"" + (here ? ",\"exe\":" + JsonQuote(Utf8(ExePath())) : std::string()) + "}");
     ReadFrame(h, reply);
     CloseHandle(h);
+    if (reply.find("not this one") != std::string::npos) return 0;
     WaitDaemonGone();  // then the executable can be replaced
     Sleep(200);
     return 0;
