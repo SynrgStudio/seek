@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A session's tool calls run at the same time,** each on a thread and a connection of its own. Before, a session's calls were served one after the other, so a `find` sent during a slow `grep` waited for it ([#13](https://github.com/SynrgStudio/seek/issues/13)).
+
 ## 0.2.2
 
 A review of the whole code, with what it found.

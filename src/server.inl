@@ -247,12 +247,14 @@ void StartDaemon() {
 
 HANDLE ConnectDaemon(int waitMs) {
     const std::wstring name = PipeName();
-    for (int waited = 0;; waited += 100) {
+    for (int waited = 0, busy = 0;;) {
         HANDLE h = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         if (h != INVALID_HANDLE_VALUE) return h;
-        if (GetLastError() == ERROR_PIPE_BUSY) WaitNamedPipeW(name.c_str(), 500);
+        // every instance taken (another call connected a moment ago): the next one comes right away
+        if (GetLastError() == ERROR_PIPE_BUSY && ++busy < 50 && WaitNamedPipeW(name.c_str(), 500)) continue;
         if (waited >= waitMs) return nullptr;
         Sleep(100);
+        waited += 100;
     }
 }
 
@@ -265,39 +267,33 @@ void WaitDaemonGone() {
     }
 }
 
-bool g_local = false;  // the daemon couldn't be reached: everything runs in this process
-HANDLE g_pipe = nullptr;
+std::atomic<bool> g_local{false};  // the daemon couldn't be reached: everything runs in this process
 
 void LocalReady() {
     static std::once_flag once;
     std::call_once(once, [] { LoadEverything(false); });
 }
 
-// One tool call: through the daemon (starting it if needed), or here.
+// One tool call: through the daemon (starting it if needed), or here. On a connection of its own, since the calls of
+// one session run at the same time, as the agent sends them.
 ToolOut CallTool(const std::string& tool, const Json& args, const std::wstring& client) {
     std::string argText;
     JsonWrite(args, argText);
     const std::string req = "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":" + JsonQuote(tool) + ",\"args\":" + argText + ",\"client\":" + JsonQuote(Utf8(client)) + "}";
     for (int attempt = 0; attempt < 3 && !g_local; ++attempt) {
-        if (!g_pipe) {
-            g_pipe = ConnectDaemon(0);
-            if (!g_pipe) {
-                StartDaemon();
-                g_pipe = ConnectDaemon(15000);
-            }
-            if (!g_pipe) break;
+        HANDLE pipe = ConnectDaemon(0);
+        if (!pipe) {
+            StartDaemon();
+            pipe = ConnectDaemon(15000);
         }
+        if (!pipe) break;
         std::string reply;
-        if (!WriteFrame(g_pipe, req) || !ReadFrame(g_pipe, reply)) {
-            CloseHandle(g_pipe);
-            g_pipe = nullptr;
-            continue;
-        }
+        const bool answered = WriteFrame(pipe, req) && ReadFrame(pipe, reply);
+        CloseHandle(pipe);
+        if (!answered) continue;
         Json j;
         if (!JsonParse(reply, j)) break;
         if (j.at("restart")) {  // it was an older one: it is closing, start the new one
-            CloseHandle(g_pipe);
-            g_pipe = nullptr;
             WaitDaemonGone();
             continue;
         }
@@ -386,6 +382,29 @@ std::string Handle(const Json& msg, std::wstring& client) {
     return error(-32601, "Method not found");
 }
 
+// Is there a tools/call in it? Those run on a thread of their own, so that the calls an agent sends at once run at once.
+bool IsToolCall(const Json& msg) {
+    if (msg.kind == Json::Arr) {
+        for (const Json& one : msg.a)
+            if (IsToolCall(one)) return true;
+        return false;
+    }
+    const Json* m = msg.at("method");
+    return m && m->kind == Json::Str && m->s == "tools/call";
+}
+
+// One message: a request's reply is sent, a batch's replies together.
+void Answer(const Json& msg, std::wstring& client) {
+    if (msg.kind == Json::Arr) {  // a batch, from clients of the 2025-03-26 protocol
+        std::string replies;
+        for (const Json& one : msg.a)
+            if (std::string r = Handle(one, client); !r.empty()) replies += (replies.empty() ? "" : ",") + r;
+        if (!replies.empty()) Send("[" + replies + "]");
+        return;
+    }
+    if (std::string r = Handle(msg, client); !r.empty()) Send(r);
+}
+
 int McpMain() {
     std::wstring client;
     std::string buf, line;
@@ -406,14 +425,11 @@ int McpMain() {
                 Send(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}})");
                 continue;
             }
-            if (msg.kind == Json::Arr) {  // a batch, from clients of the 2025-03-26 protocol
-                std::string replies;
-                for (const Json& one : msg.a)
-                    if (std::string r = Handle(one, client); !r.empty()) replies += (replies.empty() ? "" : ",") + r;
-                if (!replies.empty()) Send("[" + replies + "]");
+            if (IsToolCall(msg)) {  // on a thread of its own: the next message is read meanwhile
+                std::thread([msg = std::move(msg), c = client]() mutable { Answer(msg, c); }).detach();
                 continue;
             }
-            if (std::string r = Handle(msg, client); !r.empty()) Send(r);
+            Answer(msg, client);
         }
     }
     return 0;

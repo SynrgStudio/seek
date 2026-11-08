@@ -289,6 +289,17 @@ check("mcp: find on all drives, warm", "notepad.exe" in r["result"]["content"][0
 print("      (warm, %.3f s)" % (time.time() - t0))
 r = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "grep", "arguments": {"pattern": "quick brown", "path": S + "\\repo"}}})
 check("mcp: tools/call grep", "engine.cpp" in r["result"]["content"][0]["text"], json.dumps(r)[:800])
+# two calls at once, the way an agent sends them: the quick one doesn't wait for the slow one
+slow = {"jsonrpc": "2.0", "id": 51, "method": "tools/call", "params": {"name": "grep", "arguments": {"pattern": "zzqqxxyy", "path": os.environ["WINDIR"], "ignored": True, "time_budget_ms": 2500}}}
+quick = {"jsonrpc": "2.0", "id": 52, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "engine.cpp", "path": S}}}
+t0 = time.time()
+p.stdin.write((json.dumps(slow) + "\n" + json.dumps(quick) + "\n").encode("utf-8"))
+p.stdin.flush()
+first = json.loads(p.stdout.readline().decode("utf-8"))
+quick_at = time.time() - t0
+second = json.loads(p.stdout.readline().decode("utf-8"))
+check("mcp: a call sent during a slow one is answered first", first["id"] == 52 and second["id"] == 51, "replies came as %s, %s" % (first["id"], second["id"]))
+print("      (the quick one after %.2f s, the slow one after %.2f s)" % (quick_at, time.time() - t0))
 # a change while the background process watches: recent sees it
 time.sleep(1.0)
 put("repo/src/fresh_change.cpp", "// just written\n")
