@@ -44,9 +44,21 @@ try {
         throw "seek.exe doesn't match the release's SHA-256 ($got against $want). Nothing was installed."
     }
 
-    if (Test-Path $exe) { & $exe --stop | Out-Null }  # the background process lets go of the old file
-    Move-Item -Force -Path $download -Destination $exe
+    # The background process lets go of the old file, but each open agent session runs a seek.exe of its own, and
+    # Windows doesn't let a running program be replaced. It can be renamed, though: the old one is moved aside and
+    # deleted once nothing runs it, now or on the next install. Those sessions start the background process again
+    # from seek.exe, so they get the new one from their next call.
+    if (Test-Path $exe) { & $exe --stop | Out-Null }
+    Get-ChildItem -Path $dir -Filter 'seek.exe.old-*' | Remove-Item -Force -ErrorAction SilentlyContinue
+    $old = $null
+    if (Test-Path $exe) {
+        $old = "$exe.old-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        Move-Item -Path $exe -Destination $old
+    }
+    Move-Item -Path $download -Destination $exe
+    if ($old) { Remove-Item $old -Force -ErrorAction SilentlyContinue }
     Write-Host "Installed $(& $exe --version) in $exe" -ForegroundColor Green
+    if ($old -and (Test-Path $old)) { Write-Host 'Agent sessions already open use it from their next call; restart them to see what is new in the tools.' }
 
     if (-not $NoRegister) {
         # what a client writes to stderr isn't the installer failing: Windows PowerShell would stop on it otherwise

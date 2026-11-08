@@ -11,6 +11,7 @@
   - It finds Claude Code where its own installer puts it, `%USERPROFILE%\.local\bin`, even when that folder isn't on PATH.
   - It says what happened with each client.
   - It leaves the console's settings as they were.
+  - It updates Seek while agent sessions are using it. Before, it couldn't replace `seek.exe` with any session open; now the old one is moved aside, and those sessions get the new one from their next call.
 
 ## 0.1.0
 
