@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **A session's tool calls run at the same time,** each on a thread and a connection of its own. Before, a session's calls were served one after the other, so a `find` sent during a slow `grep` waited for it ([#13](https://github.com/SynrgStudio/seek/issues/13)).
+- **`find` follows a renamed folder:** what is inside is walked (with a budget) and counts as created since the index, and what the index lists under the old name is hidden. Before, after `mv old new` nothing inside `new` could be found until the index was renewed ([#16](https://github.com/SynrgStudio/seek/issues/16)).
 
 ## 0.2.2
 

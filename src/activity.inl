@@ -40,6 +40,28 @@ void PruneOldest(Map& m, size_t max, size_t keep, TimeOf timeOf) {
     for (auto it = m.begin(); it != m.end();) it = timeOf(it->second) < cut ? m.erase(it) : std::next(it);
 }
 
+const std::unordered_set<std::wstring>& JunkDirs();  // grep.inl
+
+// A folder renamed or moved here: the watchers see the folder, and nothing of what is inside. That is walked, with a
+// budget, and counts as made since the index. Caches and private places are left out, as they rank last anyway.
+void AddedWalk(const std::wstring& root) {
+    std::vector<AddedItem> got;
+    const int64_t t = NowFt();
+    WalkTree(root, GetTickCount64() + 3000, [&](const std::wstring& p, const WIN32_FIND_DATAW& fd) {
+        const std::wstring k = Key(p);
+        if (Private(k)) return false;
+        const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        got.push_back({p, dir, k, t});
+        return dir && got.size() < 50000 && !JunkDirs().count(Lower(fd.cFileName));
+    });
+    std::lock_guard lk(g_actM);
+    for (AddedItem& a : got) {
+        g_removed.erase(a.key);
+        g_added[a.key] = std::move(a);
+    }
+    PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+}
+
 void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
     const std::wstring key = Key(path);
     if (Private(key) || IsUnder(key, Key(DataDir()))) return;
@@ -50,23 +72,34 @@ void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
         dir = (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
     const int64_t t = when ? when : NowFt();
-    std::lock_guard lk(g_actM);
-    if (kind == kDeleted && g_added.erase(key)) {  // made since the index and gone again: nothing to remember of it
-        g_act.erase(key);
-        return;
-    }
-    g_act[key] = {path, t, kind};
-    if (kind == kDeleted) {
-        g_removed[key] = t;
-        PruneOldest(g_removed, kSinceMax, kSinceKeep, [](int64_t x) { return x; });
-    } else {
-        g_removed.erase(key);
-        if (kind == kCreated || kind == kRenamed) {
-            g_added[key] = {path, dir, key, t};
-            PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+    {
+        std::lock_guard lk(g_actM);
+        if (kind == kDeleted) {
+            // Made since the index and gone again: nothing to remember of it. Unless it was a folder: what was made inside
+            // it since the index is still in g_added, and Removed() hides that through the folder.
+            const auto it = g_added.find(key);
+            const bool sinceIndex = it != g_added.end(), folder = sinceIndex && it->second.dir;
+            if (sinceIndex) {
+                g_added.erase(it);
+                g_act.erase(key);
+            } else {
+                g_act[key] = {path, t, kind};
+            }
+            if (!sinceIndex || folder) {
+                g_removed[key] = t;
+                PruneOldest(g_removed, kSinceMax, kSinceKeep, [](int64_t x) { return x; });
+            }
+        } else {
+            g_act[key] = {path, t, kind};
+            g_removed.erase(key);
+            if (kind == kCreated || kind == kRenamed) {
+                g_added[key] = {path, dir, key, t};
+                PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+            }
         }
+        PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });
     }
-    PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });
+    if (kind == kRenamed && dir) std::thread(AddedWalk, path).detach();  // what is inside came along, unseen
 }
 
 // A drive has a newer index: it holds what was created on the drive before it was taken, and no longer what was
@@ -200,9 +233,15 @@ int64_t LastActivity(const std::wstring& key) {
     return it != g_act.end() && it->second.kind != kDeleted ? it->second.time : 0;
 }
 
+// Gone since the index was taken: the path itself, or a folder above it (the index still lists what a deleted or
+// renamed folder held; the watchers only saw the folder go).
 bool Removed(const std::wstring& key) {
     std::lock_guard lk(g_actM);
-    return g_removed.count(key) != 0;
+    if (g_removed.empty()) return false;
+    if (g_removed.count(key)) return true;
+    for (size_t at = key.rfind(L'\\'); at != std::wstring::npos && at > 2; at = key.rfind(L'\\', at - 1))
+        if (g_removed.count(key.substr(0, at))) return true;
+    return false;
 }
 
 // ---- what Jolt knows: usage.txt (heat, last use, folder) and recents.txt (opened last, first)
