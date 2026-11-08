@@ -199,11 +199,14 @@ int DaemonMain() {
     ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sa.lpSecurityDescriptor, nullptr);
     std::thread([] { LoadEverything(true); }).detach();
     ActStartWatching();
-    std::thread([] {  // saves what it saw, picks up a newer index from Jolt, and walks its own indexes again daily
+    std::thread([] {  // saves what it saw, watches drives that couldn't be, picks up a newer index from Jolt, and walks its own indexes again daily
         for (int tick = 1;; ++tick) {
             Sleep(60 * 1000);
             CacheExpire();
-            if (tick % 5 == 0) ActSave();
+            if (tick % 5 == 0) {
+                ActSave();
+                ActWatchMissing();
+            }
             if (tick % 10 == 0)
                 for (wchar_t c : FixedDrives()) LoadVolume(c, false);
             if (tick % 60 == 2)

@@ -116,11 +116,19 @@ void ActIndexRenewed(wchar_t letter, int64_t stamp) {
 void CacheChanged(const std::wstring& path);  // cache.inl
 void CacheLost(wchar_t letter);
 
+std::atomic<uint32_t> g_watchAlive{0};  // a bit per drive with a watcher thread
+std::atomic<uint32_t> g_lostBatches[26];  // per drive: how often more changed at once than the buffer holds
+
 void ActWatch(wchar_t letter) {
+    const uint32_t bit = 1u << (towupper(letter) - L'A');
+    if (g_watchAlive.fetch_or(bit) & bit) return;  // one is there already
     const std::wstring root = std::wstring(1, letter) + L":\\";
     HANDLE d = CreateFileW(root.c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (d == INVALID_HANDLE_VALUE) return;
+    if (d == INVALID_HANDLE_VALUE) {  // locked, or gone: ActWatchMissing tries again later
+        g_watchAlive &= ~bit;
+        return;
+    }
     std::vector<DWORD> buf(64 * 1024);  // 256 KB, DWORD-aligned as the API wants
     DWORD got = 0;
     while (ReadDirectoryChangesW(d, buf.data(), static_cast<DWORD>(buf.size() * sizeof(DWORD)), TRUE,
@@ -128,6 +136,7 @@ void ActWatch(wchar_t letter) {
                                      FILE_NOTIFY_CHANGE_SIZE,
                                  &got, nullptr, nullptr)) {
         if (!got) {  // too much at once: that batch is lost
+            ++g_lostBatches[towupper(letter) - L'A'];
             CacheLost(letter);
             continue;
         }
@@ -148,11 +157,20 @@ void ActWatch(wchar_t letter) {
         }
     }
     CloseHandle(d);
+    g_watchAlive &= ~bit;
+    CacheLost(letter);  // from here on, what is kept of this drive isn't kept current
+}
+
+// A watcher for each fixed drive without one: at the start, and now and then after, since a drive can be locked
+// (BitLocker) when the process starts, or appear later.
+void ActWatchMissing() {
+    for (wchar_t c : FixedDrives())
+        if (!(g_watchAlive & (1u << (c - L'A')))) std::thread(ActWatch, c).detach();
 }
 
 void ActStartWatching() {
     if (g_watching.exchange(true)) return;
-    for (wchar_t c : FixedDrives()) std::thread(ActWatch, c).detach();
+    ActWatchMissing();
 }
 
 // ---- kept between runs
