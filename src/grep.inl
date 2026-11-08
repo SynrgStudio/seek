@@ -460,9 +460,13 @@ struct GrepQuery {
     uint64_t budgetMs = 6000;
 };
 
+constexpr size_t kNamedSkips = 5;  // how many of the files passed over are named in the answer
+
 struct GrepResult {
     std::vector<FileHits> files;  // in the order they were walked
     uint64_t searched = 0, docs = 0, big = 0, binaries = 0, unreadable = 0;
+    std::vector<std::pair<std::wstring, uint64_t>> bigFiles;  // the first few over the size limit, with their size
+    std::vector<std::wstring> unreadableFiles;                // the first few that couldn't be read
     std::unordered_map<std::wstring, int> noFilter;  // documents without a text filter, by extension
     bool timedOut = false, fromMemory = false;
     std::wstring error;
@@ -767,8 +771,13 @@ GrepResult RunGrep(const GrepQuery& q) {
                 return;
             }
             if (r == ReadOutcome::Binary) ++binaries;
-            if (r == ReadOutcome::Big) ++big;
-            if (r == ReadOutcome::Fail) ++unreadable;
+            if (r == ReadOutcome::Big || r == ReadOutcome::Fail) {  // passed over: the answer says so
+                if (r == ReadOutcome::Big) ++big;
+                else ++unreadable;
+                std::lock_guard lk(fm);
+                if (r == ReadOutcome::Big && res.bigFiles.size() < kNamedSkips) res.bigFiles.push_back({j.path, j.size});
+                if (r == ReadOutcome::Fail && res.unreadableFiles.size() < kNamedSkips) res.unreadableFiles.push_back(j.path);
+            }
             if (r != ReadOutcome::Ok) return;
         }
         ++searched;

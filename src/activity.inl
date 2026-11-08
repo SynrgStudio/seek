@@ -20,21 +20,24 @@ struct Act {
 };
 
 std::mutex g_actM;
-std::unordered_map<std::wstring, Act> g_act;  // by key
-std::vector<AddedItem> g_added;               // created after the indexes were taken
-std::unordered_set<std::wstring> g_removed;   // deleted since (keys)
-int64_t g_actSince = 0;                       // since when changes have been watched
+std::unordered_map<std::wstring, Act> g_act;           // by key
+std::unordered_map<std::wstring, AddedItem> g_added;   // created after the indexes were taken, by key
+std::unordered_map<std::wstring, int64_t> g_removed;   // deleted since: key, and when
+int64_t g_actSince = 0;                                // since when changes have been watched
 std::atomic<bool> g_watching{false};
 constexpr size_t kActMax = 120000, kActKeep = 80000;
+constexpr size_t kSinceMax = 100000, kSinceKeep = 80000;  // created or deleted since the index: over that, the oldest go
 
-void ActPrune() {  // with g_actM held
-    if (g_act.size() <= kActMax) return;
+// Over max entries, the oldest go and keep stay. With g_actM held.
+template <class Map, class TimeOf>
+void PruneOldest(Map& m, size_t max, size_t keep, TimeOf timeOf) {
+    if (m.size() <= max) return;
     std::vector<int64_t> times;
-    times.reserve(g_act.size());
-    for (const auto& [k, a] : g_act) times.push_back(a.time);
-    std::nth_element(times.begin(), times.begin() + (times.size() - kActKeep), times.end());
-    const int64_t cut = times[times.size() - kActKeep];
-    for (auto it = g_act.begin(); it != g_act.end();) it = it->second.time < cut ? g_act.erase(it) : std::next(it);
+    times.reserve(m.size());
+    for (const auto& e : m) times.push_back(timeOf(e.second));
+    std::nth_element(times.begin(), times.begin() + (times.size() - keep), times.end());
+    const int64_t cut = times[times.size() - keep];
+    for (auto it = m.begin(); it != m.end();) it = timeOf(it->second) < cut ? m.erase(it) : std::next(it);
 }
 
 void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
@@ -46,12 +49,35 @@ void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
         if (a == INVALID_FILE_ATTRIBUTES) return;  // already gone
         dir = (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
+    const int64_t t = when ? when : NowFt();
     std::lock_guard lk(g_actM);
-    g_act[key] = {path, when ? when : NowFt(), kind};
-    if (kind == kDeleted) g_removed.insert(key);
-    else g_removed.erase(key);
-    if ((kind == kCreated || kind == kRenamed) && g_added.size() < 50000) g_added.push_back({path, dir, key});
-    ActPrune();
+    if (kind == kDeleted && g_added.erase(key)) {  // made since the index and gone again: nothing to remember of it
+        g_act.erase(key);
+        return;
+    }
+    g_act[key] = {path, t, kind};
+    if (kind == kDeleted) {
+        g_removed[key] = t;
+        PruneOldest(g_removed, kSinceMax, kSinceKeep, [](int64_t x) { return x; });
+    } else {
+        g_removed.erase(key);
+        if (kind == kCreated || kind == kRenamed) {
+            g_added[key] = {path, dir, key, t};
+            PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+        }
+    }
+    PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });
+}
+
+// A drive has a newer index: it holds what was created on the drive before it was taken, and no longer what was
+// deleted, so those entries go. With a margin, since an index takes a while to make and what changed meanwhile may
+// or may not be in it: a name kept here that the index also has shows once, one dropped that it lacks would be missing.
+void ActIndexRenewed(wchar_t letter, int64_t stamp) {
+    const int64_t cut = stamp - 15 * kMinute;
+    const wchar_t l = static_cast<wchar_t>(towlower(letter));
+    std::lock_guard lk(g_actM);
+    for (auto it = g_added.begin(); it != g_added.end();) it = it->first[0] == l && it->second.time < cut ? g_added.erase(it) : std::next(it);
+    for (auto it = g_removed.begin(); it != g_removed.end();) it = it->first[0] == l && it->second < cut ? g_removed.erase(it) : std::next(it);
 }
 
 void CacheChanged(const std::wstring& path);  // cache.inl
@@ -121,8 +147,8 @@ void ActSave() {
     MoveFileExW(tmp.c_str(), f.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
-// Reads what was seen before. Created and deleted items newer than the oldest index count as added or removed.
-void ActLoad(int64_t indexStamp) {
+// Reads what was seen before. Created and deleted items newer than their drive's index count as added or removed.
+void ActLoad(const std::array<int64_t, 26>& indexStamp) {
     std::ifstream in(ActFile(), std::ios::binary);
     std::string line;
     std::vector<Act> loaded;
@@ -140,23 +166,30 @@ void ActLoad(int64_t indexStamp) {
         Act x{Wide(line.substr(b + 1)), _strtoi64(line.c_str(), nullptr, 10), static_cast<uint8_t>(atoi(line.c_str() + a + 1))};
         if (x.time >= old) loaded.push_back(std::move(x));
     }
-    std::vector<AddedItem> added;
-    for (const Act& x : loaded)
-        if ((x.kind == kCreated || x.kind == kRenamed) && x.time > indexStamp && added.size() < 20000) {
-            const DWORD at = GetFileAttributesW(x.path.c_str());
-            if (at != INVALID_FILE_ATTRIBUTES) added.push_back({x.path, (at & FILE_ATTRIBUTE_DIRECTORY) != 0, Key(x.path)});
-        }
+    auto stampOf = [&](const std::wstring& key) {
+        const int i = key.empty() ? -1 : static_cast<int>(towupper(key[0])) - L'A';
+        return i >= 0 && i < 26 ? indexStamp[static_cast<size_t>(i)] : 0;
+    };
+    std::vector<AddedItem> added;  // the newest first, as saved: the ones still there
+    for (const Act& x : loaded) {
+        if (x.kind != kCreated && x.kind != kRenamed) continue;
+        const std::wstring k = Key(x.path);
+        if (Private(k) || x.time <= stampOf(k) || added.size() >= 20000) continue;
+        const DWORD at = GetFileAttributesW(x.path.c_str());
+        if (at != INVALID_FILE_ATTRIBUTES) added.push_back({x.path, (at & FILE_ATTRIBUTE_DIRECTORY) != 0, k, x.time});
+    }
     std::lock_guard lk(g_actM);
     for (Act& x : loaded) {
         const std::wstring k = Key(x.path);
         if (Private(k)) continue;
         auto it = g_act.find(k);
         if (it == g_act.end() || it->second.time < x.time) {
-            if (x.kind == kDeleted && x.time > indexStamp) g_removed.insert(k);
+            if (x.kind == kDeleted && x.time > stampOf(k)) g_removed[k] = x.time;
             g_act[k] = std::move(x);
         }
     }
-    g_added.insert(g_added.end(), added.begin(), added.end());
+    for (AddedItem& a : added)
+        if (!g_removed.count(a.key)) g_added.emplace(a.key, std::move(a));
     g_actSince = since ? since : NowFt();
 }
 

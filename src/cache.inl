@@ -151,9 +151,11 @@ void CacheChanged(const std::wstring& path) {
     for (const auto& f : g_folders) {
         if (f->stale || (key != f->rootKey && !IsUnder(key, f->rootKey))) continue;
         if (f->ready && !key.ends_with(L"\\.git\\info\\exclude")) {
-            // only what is in a folder that was walked, or is one, can change an answer
-            std::shared_lock sl(f->m);
-            if (!f->dirs.count(key) && !f->dirs.count(Key(ParentOf(path)))) continue;
+            // Only what is in a folder that was walked, or is one, can change an answer. Without waiting: CacheApply
+            // holds the folder for as long as it reads what changed, and this thread, a drive's watcher, must not fall
+            // behind (what it doesn't look at goes to the list, and CacheApply sorts it out).
+            std::shared_lock sl(f->m, std::try_to_lock);
+            if (sl.owns_lock() && !f->dirs.count(key) && !f->dirs.count(Key(ParentOf(path)))) continue;
         }
         if (f->dirty.size() >= kDirtyMax) f->stale = true;
         else f->dirty.push_back(path);
@@ -339,8 +341,15 @@ std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const
             switch (c.kind) {
                 case kcBinary:
                 case kcBinaryExt: ++binaries; continue;
-                case kcBig: ++big; continue;
-                case kcFail: ++unreadable; continue;
+                case kcBig:
+                case kcFail: {  // passed over: the answer says so
+                    if (c.kind == kcBig) ++big;
+                    else ++unreadable;
+                    std::lock_guard lk(fm);
+                    if (c.kind == kcBig && res.bigFiles.size() < kNamedSkips) res.bigFiles.push_back({c.path, c.size});
+                    if (c.kind == kcFail && res.unreadableFiles.size() < kNamedSkips) res.unreadableFiles.push_back(c.path);
+                    continue;
+                }
                 case kcNoFilter:
                     if (q.documents) {
                         std::lock_guard lk(fm);

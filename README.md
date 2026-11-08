@@ -61,7 +61,7 @@ The installer:
 - checks it against the release's SHA-256;
 - adds it to **Claude Code** and **Codex** when they are installed.
 
-Running it again updates Seek.
+Running it again updates Seek, with agent sessions open too: they get the new version from their next call.
 
 For any other MCP client, such as Cursor, Cline or Claude Desktop, add a stdio server whose command is the full path to `seek.exe`, with no arguments:
 

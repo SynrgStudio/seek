@@ -58,14 +58,23 @@ std::vector<std::shared_ptr<const Volume>> Volumes() {
     return g_vols;
 }
 
+void ActIndexRenewed(wchar_t letter, int64_t stamp);  // activity.inl
+
 void Publish(std::shared_ptr<const Volume> v) {
-    std::lock_guard lk(g_volM);
-    for (auto& x : g_vols)
-        if (x->letter == v->letter) {
-            x = std::move(v);
-            return;
-        }
-    g_vols.push_back(std::move(v));
+    const wchar_t letter = v->letter;
+    const int64_t stamp = v->stamp;
+    {
+        std::lock_guard lk(g_volM);
+        bool placed = false;
+        for (auto& x : g_vols)
+            if (x->letter == letter) {
+                x = std::move(v);
+                placed = true;
+                break;
+            }
+        if (!placed) g_vols.push_back(std::move(v));
+    }
+    ActIndexRenewed(letter, stamp);
 }
 
 std::vector<wchar_t> FixedDrives() {
@@ -357,11 +366,14 @@ bool InScope(const Volume& v, uint32_t i, uint32_t scope, uint8_t scopeDepth) {
 // the path.
 
 struct NameQuery {
-    std::vector<std::wstring> words, exts, notWords, globs, pathParts;
+    std::vector<std::wstring> words, exts, notWords, pathParts;
+    std::vector<std::vector<std::wstring>> globs;  // one of each group must match: "*.{ts,tsx}" is a group of two
     int kind = 0;  // 1 folders, 2 files
     std::wstring text;
     bool Empty() const { return words.empty() && exts.empty() && globs.empty() && pathParts.empty(); }
 };
+
+std::vector<std::wstring> ExpandBraces(const std::wstring& g);
 
 NameQuery ParseNameQuery(const std::wstring& q) {
     NameQuery out;
@@ -382,11 +394,17 @@ NameQuery ParseNameQuery(const std::wstring& q) {
         }
     }
     if (!cur.empty()) tokens.push_back(cur);
-    for (std::wstring t : tokens) {
-        const std::wstring l = Lower(t);
-        if (l == L"type:file" || l == L"type:files") out.kind = 2;
-        else if (l == L"type:folder" || l == L"type:folders" || l == L"type:dir") out.kind = 1;
-        else if (l.rfind(L"ext:", 0) == 0) {
+    for (const std::wstring& t : tokens) {
+        std::wstring l = Lower(t);
+        if (l == L"type:file" || l == L"type:files") {
+            out.kind = 2;
+            continue;
+        }
+        if (l == L"type:folder" || l == L"type:folders" || l == L"type:dir") {
+            out.kind = 1;
+            continue;
+        }
+        if (l.rfind(L"ext:", 0) == 0) {
             size_t at = 4;
             while (at < l.size()) {
                 size_t end = l.find(L',', at);
@@ -395,13 +413,55 @@ NameQuery ParseNameQuery(const std::wstring& q) {
                 if (!e.empty()) out.exts.push_back(e[0] == L'.' ? e : L"." + e);
                 at = end + 1;
             }
-        } else if (l.size() > 1 && l[0] == L'!') out.notWords.push_back(l.substr(1));
-        else if (l.size() > 1 && l[0] == L'.' && l.find_first_of(L".*?\\/", 1) == std::wstring::npos) out.exts.push_back(l);
-        else if (l.find_first_of(L"*?") != std::wstring::npos) out.globs.push_back(l);
-        else if (l.find_first_of(L"\\/") != std::wstring::npos) {
-            std::replace(t.begin(), t.end(), L'/', L'\\');
-            out.pathParts.push_back(Lower(t));
-        } else out.words.push_back(l);
+            continue;
+        }
+        if (l.size() > 1 && l[0] == L'!') {
+            out.notWords.push_back(l.substr(1));
+            continue;
+        }
+        if (l.find_first_of(L"\\/") != std::wstring::npos) {
+            // A path fragment: where to look, up to its last slash, and what, after it ("src/report.pdf", "src/*.inl",
+            // "docs/"). The fragment must be whole folder names, so it starts at a separator unless it starts at a drive.
+            std::replace(l.begin(), l.end(), L'/', L'\\');
+            const size_t cut = l.find_last_of(L'\\');
+            std::wstring where = l.substr(0, cut + 1);
+            if (where[0] != L'\\' && !(where.size() > 1 && where[1] == L':')) where = L"\\" + where;
+            if (where != L"\\") out.pathParts.push_back(where);
+            l = l.substr(cut + 1);
+            if (l.empty()) continue;
+        }
+        if (l.size() > 1 && l[0] == L'.' && l.find_first_of(L".*?{", 1) == std::wstring::npos) out.exts.push_back(l);
+        else if (l.find_first_of(L"*?{") != std::wstring::npos) out.globs.push_back(ExpandBraces(l));
+        else out.words.push_back(l);
+    }
+    return out;
+}
+
+// "*.{ts,tsx}" -> "*.ts", "*.tsx": each {a,b} in turn, nested ones too. At most 64 globs; past that, as given.
+std::vector<std::wstring> ExpandBraces(const std::wstring& g) {
+    std::vector<std::wstring> out{g};
+    for (size_t i = 0; i < out.size(); ++i) {
+        const std::wstring s = out[i];
+        const size_t open = s.find(L'{');
+        if (open == std::wstring::npos) continue;
+        size_t depth = 0, close = std::wstring::npos;
+        std::vector<size_t> commas;
+        for (size_t k = open; k < s.size() && close == std::wstring::npos; ++k) {
+            if (s[k] == L'{') ++depth;
+            else if (s[k] == L'}' && --depth == 0) close = k;
+            else if (s[k] == L',' && depth == 1) commas.push_back(k);
+        }
+        if (close == std::wstring::npos || out.size() + commas.size() > 64) continue;
+        std::vector<std::wstring> made;
+        size_t from = open + 1;
+        for (size_t c : commas) {
+            made.push_back(s.substr(0, open) + Trim(s.substr(from, c - from)) + s.substr(close + 1));
+            from = c + 1;
+        }
+        made.push_back(s.substr(0, open) + Trim(s.substr(from, close - from)) + s.substr(close + 1));
+        out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+        out.insert(out.begin() + static_cast<std::ptrdiff_t>(i), made.begin(), made.end());
+        --i;  // the first of them may have braces of its own
     }
     return out;
 }
@@ -453,8 +513,8 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
     if (!q.exts.empty()) {
         if (dir) return false;
         bool ok = false;
-        for (const std::wstring& e : q.exts)
-            if (n > e.size() && _wcsnicmp(name + n - e.size(), e.c_str(), e.size()) == 0) ok = true;
+        for (const std::wstring& e : q.exts)  // n == e.size(): the dotfile itself, .gitignore for ".gitignore"
+            if (n >= e.size() && _wcsnicmp(name + n - e.size(), e.c_str(), e.size()) == 0) ok = true;
         if (!ok) return false;
     }
     score = 0;
@@ -468,8 +528,11 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
         CharLowerBuffW(lowerBuf.data(), static_cast<DWORD>(n));
         for (const std::wstring& w : q.notWords)
             if (lowerBuf.find(w) != std::wstring::npos) return false;
-        for (const std::wstring& g : q.globs)
-            if (!GlobMatch(g.c_str(), lowerBuf.c_str())) return false;
+        for (const auto& any : q.globs) {  // one of each group
+            bool ok = false;
+            for (const std::wstring& g : any) ok = ok || GlobMatch(g.c_str(), lowerBuf.c_str());
+            if (!ok) return false;
+        }
     }
     if (q.words.size() == 1) score += NameRank(name, n, q.words[0]);
     return true;
@@ -480,6 +543,7 @@ struct AddedItem {
     std::wstring path;
     bool dir = false;
     std::wstring key;  // lowercase path
+    int64_t time = 0;  // when it was seen
 };
 
 // The best candidates from the index, by score.

@@ -36,8 +36,11 @@ std::vector<std::wstring> ArgList(const Json& a, const char* k) {
     if (!v) return out;
     auto split = [&](const std::wstring& s) {
         std::wstring cur;
+        int braces = 0;  // a comma inside {a,b} is the glob's
         for (wchar_t c : s + L",") {
-            if (c == L',' || c == L';' || iswspace(c)) {
+            if (c == L'{') ++braces;
+            if (c == L'}' && braces > 0) --braces;
+            if ((c == L',' || c == L';' || iswspace(c)) && braces == 0) {
                 if (!cur.empty()) out.push_back(cur);
                 cur.clear();
             } else {
@@ -115,6 +118,10 @@ ToolOut ToolFind(const Json& a) {
     if (type == L"file" || type == L"files") q.kind = 2;
     if (type == L"folder" || type == L"folders" || type == L"dir") q.kind = 1;
     if (q.Empty() && q.kind == 0) return {L"That query only leaves things out: add a name, an extension or a wildcard.", true};
+    if (q.words.empty() && q.exts.empty() && q.globs.empty() && !q.pathParts.empty())
+        return {L"\"" + query + L"\" says where to look, not what: add a name, an extension or a wildcard after the slash, like \"" + query + L"report\" or \"" +
+                    query + L"*.md\".",
+                true};
     if (!scope.empty())
         if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
     // a folder doesn't need the index: one on a drive without it yet is walked
@@ -125,10 +132,9 @@ ToolOut ToolFind(const Json& a) {
     {
         const std::wstring scopeKey = Key(scope);
         std::lock_guard lk(g_actM);
-        if (scope.empty()) added = g_added;
-        else
-            for (const AddedItem& x : g_added)
-                if (IsUnder(x.key, scopeKey)) added.push_back(x);
+        added.reserve(g_added.size());
+        for (const auto& [k, x] : g_added)
+            if (scope.empty() || IsUnder(k, scopeKey)) added.push_back(x);
     }
     const auto vols = Volumes();
     const size_t keep = summary ? 20000 : kRanked;
@@ -228,20 +234,20 @@ ToolOut ToolFind(const Json& a) {
     } else {
         total = exact ? found.size() : real.total - std::min(real.total, dropped);
     }
+    // With no name that has the letters in order and together, what is left: names close to what was typed (a typo),
+    // or else names with the letters scattered along them. Either way the answer says so.
     bool nearOnly = false;
-    if (close.mistakes >= 0 && good == 0 && !summary) {  // close names, only when no name has the letters in order
+    if (close.mistakes >= 0 && good == 0 && !summary) {
         ScanOut nearScan = indexed ? ScanIndex(vols, added, keep, scope, nearMatch) : walkScan(nearMatch);
         std::vector<Found> more = toFound(nearScan);
-        nearOnly = good == 0 && !more.empty();
-        std::unordered_set<std::wstring> have;
-        for (const Found& f : found) have.insert(f.key);
-        for (Found& f : more)
-            if (have.insert(f.key).second) found.push_back(std::move(f));
-        if (nearOnly) {  // the list is the close names: they are what there is to page through
+        if (!more.empty()) {  // they are what there is to page through; the scattered ones say less than they do
+            nearOnly = true;
+            found = std::move(more);
             total = found.size();
             exact = true;
         }
     }
+    const bool scatteredOnly = good == 0 && !nearOnly && !found.empty();
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
     if (found.empty())
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
@@ -385,6 +391,7 @@ ToolOut ToolFind(const Json& a) {
         return {head + count + L", so offset " + std::to_wstring(offset) + L" is past the last one.\n" + building};
     }
     if (nearOnly) head += L"no name has those letters in order; these are close (typo-tolerant)";
+    else if (scatteredOnly) head += L"no name has those letters together; these have them scattered along the name (" + count + L")";
     else head += count;
     if (skipped) head += L", " + std::to_wstring(skipped + 1) + L" to " + std::to_wstring(skipped + shown);
     else if (after && !nearOnly) head += L", the best " + std::to_wstring(shown);
@@ -402,11 +409,15 @@ ToolOut ToolFind(const Json& a) {
 // ---- grep
 
 // The first sign of a regex in a pattern, or empty: when the literal text matches nothing, it is tried as one, since
-// an agent that wrote a|b most likely forgot regex: true.
+// an agent that wrote a|b most likely forgot regex: true. A backslash right after a letter or a digit is a path's
+// (src\bin, C:\data, me\.ssh), not a sign.
 std::wstring RegexSign(const std::wstring& p) {
     if (p.find(L'|') != std::wstring::npos) return L"|";
-    for (const wchar_t* s : {L".*", L".+", L"\\d", L"\\w", L"\\s", L"\\b", L"\\.", L"\\("})
+    for (const wchar_t* s : {L".*", L".+"})
         if (p.find(s) != std::wstring::npos) return s;
+    for (const wchar_t* s : {L"\\d", L"\\w", L"\\s", L"\\b", L"\\.", L"\\("})
+        for (size_t at = p.find(s); at != std::wstring::npos; at = p.find(s, at + 1))
+            if (at == 0 || !iswalnum(p[at - 1])) return s;
     if (p.size() > 1 && p[0] == L'^') return L"^";
     if (p.size() > 1 && p.back() == L'$') return L"$";
     if (const size_t o = p.find(L'['); o != std::wstring::npos && p.find(L']', o + 2) != std::wstring::npos) return L"[ ]";
@@ -427,12 +438,13 @@ ToolOut ToolGrep(const Json& a) {
     bool upper = false;
     for (wchar_t c : q.pattern) upper |= iswupper(c) != 0;
     q.ignoreCase = cs == L"insensitive" || (cs != L"sensitive" && !upper);
-    for (std::wstring g : ArgList(a, "glob")) {
-        std::replace(g.begin(), g.end(), L'/', L'\\');
-        g = Lower(g);
-        if (g.size() > 1 && g[0] == L'!') q.exclude.push_back(g.substr(1));
-        else q.include.push_back(g);
-    }
+    for (const std::wstring& given : ArgList(a, "glob"))
+        for (std::wstring g : ExpandBraces(given)) {
+            std::replace(g.begin(), g.end(), L'/', L'\\');
+            g = Lower(g);
+            if (g.size() > 1 && g[0] == L'!') q.exclude.push_back(g.substr(1));
+            else q.include.push_back(g);
+        }
     q.context = ArgInt(a, "context", 1, 0, 5);
     q.perFile = ArgInt(a, "per_file", 5, 1, 200);
     q.documents = ArgBool(a, "documents", true);
@@ -487,8 +499,27 @@ ToolOut ToolGrep(const Json& a) {
         }
         tail += Thousands(n) + L" documents (" + kinds + L") couldn't be read: no text filter for them on this PC.\n";
     }
+    if (r.big) {  // passed over for their size: named, so that a search of a log doesn't look complete when it isn't
+        std::wstring names;
+        for (const auto& [p, size] : r.bigFiles) names += (names.empty() ? L"" : L", ") + Relative(p, base) + L" (" + SizeText(size) + L")";
+        tail += Thousands(r.big) + (r.big == 1 ? L" file over 16 MB wasn't read: " : L" files over 16 MB weren't read: ") + names +
+                (r.big > r.bigFiles.size() ? L", …" : L"") + L".\n";
+    }
+    if (r.unreadable) {
+        std::wstring names;
+        for (const std::wstring& p : r.unreadableFiles) names += (names.empty() ? L"" : L", ") + Relative(p, base);
+        tail += Thousands(r.unreadable) + (r.unreadable == 1 ? L" file couldn't be read" : L" files couldn't be read") +
+                L" (in use by another program, or no permission): " + names + (r.unreadable > r.unreadableFiles.size() ? L", …" : L"") + L".\n";
+    }
     if (r.files.empty()) {
         std::wstring out = head + tail;
+        if (!r.searched && !r.timedOut && !r.big && !r.unreadable && r.noFilter.empty()) {  // nothing was even looked at: why
+            const bool globs = !q.include.empty() || !q.exclude.empty();
+            out += std::wstring(L"Nothing was searched: ") +
+                   (isFile ? L"that file is binary" : r.binaries ? (globs ? L"every file the glob kept is binary" : L"every file there is binary")
+                                                                   : (globs ? L"the glob left every file out" : L"no file there")) +
+                   L".\n";
+        }
         if (!sign.empty()) {  // not a file's name
             out += regexMiss.empty() ? sign + L" is a regex sign: pass regex: true to use it as one.\n" : regexMiss;
             return {out};
@@ -601,17 +632,22 @@ ToolOut ToolRecent(const Json& a) {
         auto it = items.find(k);
         if (it == items.end() || it->second.time < t) items[k] = {path, t, what, folder};
     };
+    // copied out first: the filtering reads from disk (.gitignore files), and the drive watchers need the lock
     int64_t since;
+    std::vector<Act> acts;
     {
         std::lock_guard lk(g_actM);
         since = g_actSince;
         for (const auto& [k, x] : g_act)
-            if (x.kind != kDeleted) add(x.path, x.time, ActName(x.kind), false);
+            if (x.kind != kDeleted && x.time >= from) acts.push_back(x);
     }
+    for (const Act& x : acts) add(x.path, x.time, ActName(x.kind), false);
+    std::vector<Use> uses;
     {
         std::lock_guard lk(g_useM);
-        for (const Use& u : g_use) add(u.path, u.last, L"folder opened in Jolt", true);
+        uses = g_use;
     }
+    for (const Use& u : uses) add(u.path, u.last, L"folder opened in Jolt", true);
     bool walked = false, walkCut = false;
     if (!scope.empty()) {  // the dates on disk too: also what changed before Seek was watching
         walked = true;

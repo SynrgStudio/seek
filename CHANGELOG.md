@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2
+
+A review of the whole code, with what it found.
+
+- **Updating with agent sessions open:** the background process serves the sessions of an older Seek instead of stepping aside for them, so a session that was open at the update gets the new version's answers from its next call. Before, such a session made the new background process exit, then went on with the old version by itself ([#3](https://github.com/SynrgStudio/seek/issues/3)).
+- **`find`:**
+  - What was created since the index was taken is kept by path: a deleted file leaves it, a newer index drops what it already holds, and over 100,000 entries the oldest go, not the newest. Before, the list stopped at 50,000 and never let one go, so after that many files were created nothing new could be found until the index was renewed ([#4](https://github.com/SynrgStudio/seek/issues/4)). A file created since the index and deleted again leaves no record at all, so build churn no longer crowds out what matters.
+  - `.gitignore` finds `.gitignore` ([#5](https://github.com/SynrgStudio/seek/issues/5)).
+  - `src/report.pdf` looks for `report.pdf` under a `src` folder, `src/*.inl` works too, and `docs/` alone asks for a name ([#6](https://github.com/SynrgStudio/seek/issues/6)).
+  - `{a,b}` in a wildcard means either ([#7](https://github.com/SynrgStudio/seek/issues/7)).
+  - When the only names found have the letters scattered along them, the answer says so, the way it does for close names.
+- **`grep`:**
+  - `{a,b}` in a glob means either, and when a glob leaves every file out, or there is nothing to read, the answer says so ([#7](https://github.com/SynrgStudio/seek/issues/7)).
+  - Files over 16 MB and files that can't be read are named, with the reason, instead of passed over in silence ([#9](https://github.com/SynrgStudio/seek/issues/9)).
+  - A backslash right after a letter or a digit, as in `src\bin`, isn't taken for a regex sign ([#12](https://github.com/SynrgStudio/seek/issues/12)).
+- `recent` no longer holds up the drive watchers while it filters what they saw ([#10](https://github.com/SynrgStudio/seek/issues/10)), and a watcher never waits for a folder in memory that is being brought up to date ([#11](https://github.com/SynrgStudio/seek/issues/11)).
+
 ## 0.2.1
 
 - **`grep`:**

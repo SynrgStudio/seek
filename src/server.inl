@@ -11,7 +11,7 @@ const char* kInstructions =
 
 const char* kToolsJson = R"JSON([
 {"name":"find","title":"Find files by name",
- "description":"Find files and folders by name anywhere on this PC (every fixed drive) in milliseconds, from a live index. Fuzzy and typo-tolerant. Exact names come first, then what the user changed lately, what is in folders they use, and what is inside `near`. Use it instead of dir /s, Get-ChildItem -Recurse or find. Query: words must appear in the name in order (fuzzy); .png or ext:png,jpg filter the extension; * and ? are wildcards on the name; !word leaves out names with it; type:file or type:folder; a fragment with a slash must be in the path.",
+ "description":"Find files and folders by name anywhere on this PC (every fixed drive) in milliseconds, from a live index. Fuzzy and typo-tolerant. Exact names come first, then what the user changed lately, what is in folders they use, and what is inside `near`. Use it instead of dir /s, Get-ChildItem -Recurse or find. Query: words must appear in the name in order (fuzzy); .png or ext:png,jpg filter the extension; * and ? are wildcards on the name, {a,b} either; !word leaves out names with it; type:file or type:folder; a fragment with a slash, like src/report.pdf or docs/, must be in the path (what follows its last slash is the name to look for).",
  "inputSchema":{"type":"object","properties":{
   "query":{"type":"string","description":"What to look for, like \"report 2026\", \"jolt.exe\", \".blend\" or \"*.log !debug\"."},
   "path":{"type":"string","description":"Only below this folder. Omit to search every drive."},
@@ -29,7 +29,7 @@ const char* kToolsJson = R"JSON([
   "path":{"type":"string","description":"The folder or file to search in."},
   "regex":{"type":"boolean","default":false},
   "case":{"type":"string","enum":["smart","sensitive","insensitive"],"default":"smart"},
-  "glob":{"type":["string","array"],"items":{"type":"string"},"description":"Which files: \"*.cpp\", \"src/**/*.ts\"; a leading ! leaves them out: \"!*.min.js\"."},
+  "glob":{"type":["string","array"],"items":{"type":"string"},"description":"Which files: \"*.cpp\", \"src/**/*.ts\", \"*.{ts,tsx}\"; a leading ! leaves them out: \"!*.min.js\"."},
   "context":{"type":"integer","minimum":0,"maximum":5,"default":1},
   "limit":{"type":"integer","minimum":1,"maximum":300,"default":30,"description":"Matching lines to show."},
   "offset":{"type":"integer","minimum":0,"default":0,"description":"Skip this many matching lines (to page)."},
@@ -97,14 +97,16 @@ void LoadEverything(bool build) {
     std::vector<wchar_t> missing;
     for (wchar_t c : drives)
         if (!LoadVolume(c, false)) missing.push_back(c);
-    int64_t oldest = 0;
-    for (const auto& v : Volumes())
-        if (!oldest || v->stamp < oldest) oldest = v->stamp;
-    ActLoad(oldest);
+    std::array<int64_t, 26> stamps{};  // when each drive's index was taken; 0 for a drive without one
+    for (const auto& v : Volumes()) stamps[static_cast<size_t>(towupper(v->letter) - L'A')] = v->stamp;
+    ActLoad(stamps);
     g_indexReady = true;  // drives without an index are searched as soon as theirs is built
     if (build)
         for (wchar_t c : missing) LoadVolume(c, true);
 }
+
+// "0.2.1" at the start of a build string ("0.2.1 Nov  8 2026 03:08:40"), as numbers.
+bool ParseVersion(const std::string& s, int v[3]) { return sscanf_s(s.c_str(), "%d.%d.%d", &v[0], &v[1], &v[2]) == 3; }
 
 void Serve(HANDLE pipe) {
     std::string req;
@@ -116,11 +118,19 @@ void Serve(HANDLE pipe) {
         } else {
             const Json* b = j.at("build");
             const Json* tool = j.at("tool");
-            if (!b || b->s != kBuild) {  // an older daemon than the program that asks: it makes room for the new one
-                WriteFrame(pipe, R"({"restart":true})");
-                FlushFileBuffers(pipe);
-                ActSave();
-                ExitProcess(0);
+            if (!b || b->s != kBuild) {
+                // A program of another build is asking. A newer one, or another build of this version (development):
+                // this process makes room for the one that asks. An older one, a session that was open when Seek was
+                // updated, is served: what passes between them hasn't changed, and it gets this version's answers.
+                int theirs[3], mine[3];
+                const bool older = b && ParseVersion(b->s, theirs) && ParseVersion(SEEK_VERSION, mine) &&
+                                   std::lexicographical_compare(theirs, theirs + 3, mine, mine + 3);
+                if (!older) {
+                    WriteFrame(pipe, R"({"restart":true})");
+                    FlushFileBuffers(pipe);
+                    ActSave();
+                    ExitProcess(0);
+                }
             }
             if (tool && tool->s == "__stop") {
                 WriteFrame(pipe, R"({"text":"stopping"})");

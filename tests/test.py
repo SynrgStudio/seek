@@ -105,6 +105,8 @@ put("ctx/near.txt", lines_with(30, "marker", {13, 15}))  # closer than twice the
 put("ctx/dense.txt", lines_with(20, "tick", {5, 6, 8, 9}))  # four in five lines
 put("ctx/apart.txt", lines_with(30, "spot", {3, 20}))
 put("ctx/long.txt", "short\n" + "a" * 100 + ("needle7" + "b" * 263) * 6 + "\nshort\n")  # one line of 1,720 characters
+put("bigs/huge.log", "filler\n" * 2500000)  # 17.5 MB: over what grep reads
+put("bigs/small.log", "filler\n")
 
 S = ROOT
 # ---- find, scoped to the test folder (walked: it was created after the index)
@@ -143,6 +145,16 @@ code, out = cli("find", dict(PAGES, offset=30))
 check("find: an offset past the end says so", "offset 30 is past the last one" in out, out)
 code, out = cli("find", dict(PAGES, summary=True))
 check("find: summary counts what it shows", out.splitlines()[0].endswith(": 25 matches.") and "about" not in out, out)
+code, out = cli("find", {"query": ".gitignore", "path": S})
+check("find: a dotfile by its own name", "repo\\.gitignore" in out and "repo\\src\\.gitignore" in out, out)
+code, out = cli("find", {"query": "src/engine.cpp", "path": S})
+check("find: a path with the name at its end", "repo\\src\\engine.cpp" in out and "engine.h" not in out, out)
+code, out = cli("find", {"query": "src/*.h", "path": S})
+check("find: a path with a wildcard at its end", "repo\\src\\engine.h" in out and "engine.cpp" not in out, out)
+code, out = cli("find", {"query": "src/", "path": S})
+check("find: a path alone asks for a name", code != 0 and "where to look" in out, out)
+code, out = cli("find", {"query": "*.{cpp,h}", "path": S})
+check("find: braces in a wildcard", "engine.cpp" in out and "engine.h" in out and "notes_utf16" not in out, out)
 
 # ---- grep
 code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo"})
@@ -168,6 +180,16 @@ code, out = cli("grep", {"pattern": "zzqq(|", "path": S + "\\repo"})
 check("grep: a regex that doesn't compile says so", "Tried as a regex too" in out and "doesn't compile" in out, out)
 code, out = cli("grep", {"pattern": "| a |", "path": S + "\\repo"})
 check("grep: a literal | that matches stays literal", "table.md" in out and "regex sign" not in out, out)
+code, out = cli("grep", {"pattern": "src\\bin", "path": S + "\\repo"})
+check("grep: a backslash inside a path isn't a regex sign", "regex sign" not in out, out)
+code, out = cli("grep", {"pattern": "Engine", "path": S + "\\repo", "glob": "*.{cpp,h}", "context": 0})
+check("grep: braces in a glob", "engine.cpp" in out and "engine.h" in out and "searched 2 files" in out, out)
+code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": "*.nothing"})
+check("grep: a glob that leaves every file out says so", "the glob left every file out" in out, out)
+code, out = cli("grep", {"pattern": "filler", "path": S + "\\bigs\\huge.log"})
+check("grep: a file over 16 MB given directly is named as not read", "1 file over 16 MB wasn't read: huge.log (17 MB)" in out, out)
+code, out = cli("grep", {"pattern": "filler", "path": S + "\\bigs"})
+check("grep: a file over 16 MB met on a walk is named too", "small.log" in out and "wasn't read: huge.log (17 MB)" in out, out)
 
 
 def numbered(out):  # the line numbers an answer writes, with ':' (a match) or '-' (context)
@@ -284,6 +306,14 @@ text = r["result"]["content"][0]["text"]
 check("mcp: recent with include_system shows it", "fresh_output" in text and "fresh_scratch" in text, text)
 r = rpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "fresh_change"}}})
 check("mcp: find knows a file created after the index", "fresh_change.cpp" in r["result"]["content"][0]["text"], r["result"]["content"][0]["text"])
+os.remove(os.path.join(ROOT, "repo", "src", "fresh_change.cpp"))
+time.sleep(1.5)
+r = rpc({"jsonrpc": "2.0", "id": 71, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "fresh_change"}}})
+check("mcp: and forgets it when it is deleted", "fresh_change.cpp" not in r["result"]["content"][0]["text"], r["result"]["content"][0]["text"])
+put("repo/src/fresh_change.cpp", "// written again\n")
+time.sleep(1.5)
+r = rpc({"jsonrpc": "2.0", "id": 72, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "fresh_change"}}})
+check("mcp: and knows it again when it is made again, once", r["result"]["content"][0]["text"].count("fresh_change.cpp") == 1, r["result"]["content"][0]["text"])
 r = rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope", "arguments": {}}})
 check("mcp: unknown tool is a protocol error", r.get("error", {}).get("code") == -32602, json.dumps(r))
 r = rpc({"jsonrpc": "2.0", "id": 9, "method": "ping"})
@@ -355,6 +385,30 @@ out = wait("alpha", lambda o: "new.txt" not in o)
 check("cache: a changed .gitignore applies", "new.txt" not in out and "moved\\f.txt" in out, out)
 out = cli("grep", {"pattern": "alpha", "path": L, "ignored": True, "limit": 50}, via="--call")[1]
 check("cache: ignored still walks the folder", "c2.txt" in out and "from Seek's memory" not in out, out)
+
+
+# ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside
+def pipe_call(build):
+    key = os.environ["SEEK_HOME"].replace("/", "\\").rstrip("\\").lower()  # Key(SeekHome()), hashed as InstanceTag does
+    h = 2166136261
+    for ch in key:
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    req = json.dumps({"build": build, "tool": "find", "args": {"query": "engine.cpp", "path": S}, "client": "test"}).encode()
+    with open(r"\\.\pipe\seek-%s-%08x" % (os.environ["USERNAME"], h), "r+b", buffering=0) as p:
+        p.write(len(req).to_bytes(4, "little") + req)
+        data = b""
+        while len(data) < 4 or len(data) < 4 + int.from_bytes(data[:4], "little"):
+            data += p.read(65536)
+        return json.loads(data[4:])
+
+
+r = pipe_call("0.0.1 Jan  1 2026 00:00:00")
+check("daemon: a session of an older Seek is served", "engine.cpp" in r.get("text", ""), json.dumps(r)[:300])
+r = pipe_call("99.0.0 Jan  1 2030 00:00:00")
+check("daemon: a session of a newer Seek makes it step aside", r.get("restart") is True, json.dumps(r)[:300])
+time.sleep(0.5)
+code, out = cli("find", {"query": "engine.cpp", "path": S}, via="--call")
+check("daemon: and the next call starts it again", "engine.cpp" in out, out)
 subprocess.run([EXE, "--stop"], timeout=60)
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
