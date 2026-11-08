@@ -458,6 +458,7 @@ struct FileHits {
 
 struct GrepQuery {
     std::wstring pattern, root;
+    std::wstring without;  // lines with this are left out: literal or a regex like the pattern, the same case rule
     bool regex = false, ignoreCase = true, documents = true, hidden = false;
     bool ignored = false;  // also what .gitignore leaves out, and dependency and cache folders
     std::vector<std::wstring> include, exclude;  // lowercase globs: on the name, or on the path below root with a '\'
@@ -545,7 +546,20 @@ struct Matcher {
     std::wstring pat;  // lowercase when ignoring case
     bool icase = true, regex = false;
     std::wregex re;
+    bool without = false;  // and lines with this are left out
+    std::wstring withoutPat;
+    std::wregex withoutRe;
 };
+
+// Does the line [s, e) have what `without` leaves out? hay: the text, lowered when ignoring case.
+bool LeftOut(const Matcher& m, const std::wstring& text, const std::wstring& hay, size_t s, size_t e) {
+    if (!m.without) return false;
+    if (!m.regex) {
+        const size_t at = hay.find(m.withoutPat, s);
+        return at != std::wstring::npos && at + m.withoutPat.size() <= e;
+    }
+    return std::regex_search(text.data() + s, text.data() + std::min(e, s + 4096), m.withoutRe);
+}
 
 // The matching lines of text[from, to), the first line of text being firstLine; the context around them may come from
 // outside that range (a file read in parts keeps the lines around each part at hand).
@@ -564,14 +578,17 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         while ((pos = hay.find(m.pat, pos)) != std::wstring::npos && pos < to) {
             line += static_cast<int>(std::count(text.begin() + counted, text.begin() + pos, L'\n'));
             counted = pos;
-            ++fh.matches;
             size_t eol = text.find(L'\n', pos);  // one per line
             if (eol == std::wstring::npos) eol = text.size();
-            if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it is
-                at.clear();
-                for (size_t p = pos; p != std::wstring::npos && p < eol && at.size() < 1000; p = hay.find(m.pat, p + m.pat.size()))
-                    at.push_back({p, m.pat.size()});
-                AddHit(fh, text, at, line, context);
+            const size_t sol = pos == 0 ? 0 : text.rfind(L'\n', pos - 1) + 1;  // the line's start (npos + 1 is 0)
+            if (!LeftOut(m, text, hay, sol, eol)) {
+                ++fh.matches;
+                if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it is
+                    at.clear();
+                    for (size_t p = pos; p != std::wstring::npos && p < eol && at.size() < 1000; p = hay.find(m.pat, p + m.pat.size()))
+                        at.push_back({p, m.pat.size()});
+                    AddHit(fh, text, at, line, context);
+                }
             }
             if (eol >= text.size()) break;
             pos = eol;
@@ -586,7 +603,7 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         const wchar_t* b = text.data() + s;
         const wchar_t* end = text.data() + std::min(e, s + 4096);  // very long lines: their start
         std::wcmatch mm;
-        if (e > from && std::regex_search(b, end, mm, m.re)) {  // a line before `from` is context, searched already
+        if (e > from && std::regex_search(b, end, mm, m.re) && !LeftOut(m, text, text, s, e)) {  // a line before `from` is context, searched already
             ++fh.matches;
             if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it matches
                 std::vector<std::pair<size_t, size_t>> at;
@@ -858,13 +875,25 @@ GrepResult RunGrep(const GrepQuery& q) {
     m.regex = q.regex;
     m.icase = q.ignoreCase;
     m.pat = q.ignoreCase && !q.regex ? Lower(q.pattern) : q.pattern;
+    const auto flags = q.ignoreCase ? std::regex::ECMAScript | std::regex::icase | std::regex::optimize : std::regex::ECMAScript | std::regex::optimize;
     if (q.regex) {
         try {
-            m.re = std::wregex(q.pattern, q.ignoreCase ? std::regex::ECMAScript | std::regex::icase | std::regex::optimize
-                                                       : std::regex::ECMAScript | std::regex::optimize);
+            m.re = std::wregex(q.pattern, flags);
         } catch (const std::regex_error& e) {
             res.error = L"The regex doesn't compile: " + Wide(e.what());
             return res;
+        }
+    }
+    if (!q.without.empty()) {
+        m.without = true;
+        m.withoutPat = q.ignoreCase && !q.regex ? Lower(q.without) : q.without;
+        if (q.regex) {
+            try {
+                m.withoutRe = std::wregex(q.without, flags);
+            } catch (const std::regex_error& e) {
+                res.error = L"The regex in without doesn't compile: " + Wide(e.what());
+                return res;
+            }
         }
     }
     const BytePre pre = MakeBytePre(q.pattern, q.regex, q.ignoreCase);

@@ -28,6 +28,7 @@ const char* kToolsJson = R"JSON([
   "pattern":{"type":"string","description":"The text to look for (or a regex with regex: true)."},
   "path":{"type":"string","description":"The folder or file to search in."},
   "regex":{"type":"boolean","default":false},
+  "without":{"type":"string","description":"Lines that also have this are left out, like grep -v after the search: literal, or a regex when regex is true, with the pattern's case rule."},
   "case":{"type":"string","enum":["smart","sensitive","insensitive"],"default":"smart"},
   "glob":{"type":["string","array"],"items":{"type":"string"},"description":"Which files: \"*.cpp\", \"src/**/*.ts\", \"*.{ts,tsx}\"; a leading ! leaves them out: \"!*.min.js\"."},
   "context":{"type":"integer","minimum":0,"maximum":5,"default":1},

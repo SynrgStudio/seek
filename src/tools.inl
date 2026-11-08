@@ -434,6 +434,7 @@ ToolOut ToolGrep(const Json& a) {
     q.root = Normalize(Expand(q.root));
     if (std::wstring bad = CheckFolder(q.root, true); !bad.empty()) return {bad, true};
     q.regex = ArgBool(a, "regex", false);
+    q.without = ArgStr(a, "without");
     const std::wstring cs = Lower(ArgStr(a, "case"));
     bool upper = false;
     for (wchar_t c : q.pattern) upper |= iswupper(c) != 0;
@@ -484,7 +485,8 @@ ToolOut ToolGrep(const Json& a) {
     uint64_t lines = 0;
     for (const FileHits& f : r.files) lines += f.matches;
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-    std::wstring head = L"grep \"" + q.pattern + L"\" in " + q.root + L": " + Thousands(lines) + (lines == 1 ? L" matching line" : L" matching lines") +
+    std::wstring head = L"grep \"" + q.pattern + L"\"" + (q.without.empty() ? L"" : L" without \"" + q.without + L"\"") + L" in " + q.root + L": " + Thousands(lines) +
+                        (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
                         (r.searched == 1 ? L" file" : L" files") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
                         L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" + (r.fromMemory ? L", read from Seek's memory, not the drive" : L"") + L").\n";
