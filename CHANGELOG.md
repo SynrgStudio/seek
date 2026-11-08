@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`grep`:**
+  - Matches close together share their context: each line is written once, a matching one with `:` even as another's context, and `--` splits the groups that don't touch, the way ripgrep does. Before, each match wrote its whole block, so the lines between two close matches came out twice or more.
+  - A long line shows a window around each of its matches, up to four, with their columns, and counts the ones past those. Before, only the first match's window was shown, with no word of the others.
+  - The header says how long the search took, says "read from Seek's memory, not the drive" instead of "kept in memory", and "1 file" instead of "1 files".
+
 ## 0.2.0
 
 - **`find`:**

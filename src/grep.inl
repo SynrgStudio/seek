@@ -439,7 +439,9 @@ bool DocText(const std::wstring& path, std::wstring& out, uint64_t deadline) {
 
 struct LineHit {
     int line = 0;
-    std::wstring text;
+    std::wstring text;  // the line; a long one around its first match
+    std::vector<std::pair<size_t, std::wstring>> more;  // a long line: around the matches past that, by column
+    int beyond = 0;  // and the matches past those
     std::vector<std::pair<int, std::wstring>> before, after;
 };
 struct FileHits {
@@ -466,23 +468,51 @@ struct GrepResult {
     std::wstring error;
 };
 
-std::wstring LineAround(const std::wstring& text, size_t s, size_t e, size_t col) {
+// A line is shown whole up to kWide characters; a longer one only around a match, kLead of them before it.
+constexpr size_t kWide = 240, kLead = 80;
+constexpr size_t kWindows = 4;  // windows of one long line, the first match's included
+
+void TrimLine(const std::wstring& text, size_t& s, size_t& e) {
     while (s < e && (text[s] == L' ' || text[s] == L'\t')) ++s;
     while (e > s && (text[e - 1] == L' ' || text[e - 1] == L'\t' || text[e - 1] == L'\r')) --e;
-    if (e - s <= 240) return text.substr(s, e - s);
-    const size_t at = col > s ? col : s, from = at > s + 80 ? at - 80 : s, to = std::min(e, from + 240);
+}
+std::wstring Window(const std::wstring& text, size_t s, size_t e, size_t from, size_t to) {
     return (from > s ? L"…" : L"") + text.substr(from, to - from) + (to < e ? L"…" : L"");
 }
+std::wstring LineAround(const std::wstring& text, size_t s, size_t e, size_t col) {
+    TrimLine(text, s, e);
+    if (e - s <= kWide) return text.substr(s, e - s);
+    const size_t at = col > s ? col : s, from = at > s + kLead ? at - kLead : s;
+    return Window(text, s, e, from, std::min(e, from + kWide));
+}
 
-void AddHit(FileHits& fh, const std::wstring& text, size_t pos, int line, int context) {
+// A matching line, with its context. at: where its matches start, and how long they are (the first one at least).
+void AddHit(FileHits& fh, const std::wstring& text, const std::vector<std::pair<size_t, size_t>>& at, int line, int context) {
     LineHit h;
     h.line = line;
+    const size_t pos = at[0].first;
     size_t s = text.rfind(L'\n', pos == 0 ? 0 : pos - 1);
     s = (s == std::wstring::npos || pos == 0) ? 0 : s + 1;
     if (pos > 0 && text[pos - 1] == L'\n') s = pos;
     size_t e = text.find(L'\n', pos);
     if (e == std::wstring::npos) e = text.size();
     h.text = LineAround(text, s, e, pos);
+    size_t ts = s, te = e;
+    TrimLine(text, ts, te);
+    if (te - ts > kWide) {  // a long line: a window for each match the ones before don't show
+        size_t shown = std::min(te, (pos > ts + kLead ? pos - kLead : ts) + kWide);
+        for (size_t i = 1; i < at.size(); ++i) {
+            const auto [p, n] = at[i];
+            if (p + n <= shown) continue;
+            if (h.more.size() + 1 >= kWindows) {
+                ++h.beyond;
+                continue;
+            }
+            const size_t from = std::max(shown, p > ts + kLead ? p - kLead : ts), to = std::min(te, from + kWide);
+            h.more.push_back({p - s + 1, Window(text, ts, te, from, to)});
+            shown = to;
+        }
+    }
     size_t bs = s;
     for (int k = 1; k <= context && bs > 0; ++k) {
         const size_t pe = bs - 1;
@@ -518,13 +548,20 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         const std::wstring& hay = m.icase ? lowered : text;
         size_t pos = 0, counted = 0;
         int line = 1;
+        std::vector<std::pair<size_t, size_t>> at;
         while ((pos = hay.find(m.pat, pos)) != std::wstring::npos) {
             line += static_cast<int>(std::count(text.begin() + counted, text.begin() + pos, L'\n'));
             counted = pos;
             ++fh.matches;
-            if (static_cast<int>(fh.lines.size()) < perFile) AddHit(fh, text, pos, line, context);
-            const size_t eol = text.find(L'\n', pos);  // one per line
-            if (eol == std::wstring::npos) break;
+            size_t eol = text.find(L'\n', pos);  // one per line
+            if (eol == std::wstring::npos) eol = text.size();
+            if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it is
+                at.clear();
+                for (size_t p = pos; p != std::wstring::npos && p < eol && at.size() < 1000; p = hay.find(m.pat, p + m.pat.size()))
+                    at.push_back({p, m.pat.size()});
+                AddHit(fh, text, at, line, context);
+            }
+            if (eol >= text.size()) break;
             pos = eol;
         }
         return;
@@ -539,7 +576,12 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         std::wcmatch mm;
         if (std::regex_search(b, end, mm, m.re)) {
             ++fh.matches;
-            if (static_cast<int>(fh.lines.size()) < perFile) AddHit(fh, text, s + static_cast<size_t>(mm.position(0)), line, context);
+            if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it matches
+                std::vector<std::pair<size_t, size_t>> at;
+                for (std::wcregex_iterator it(b, end, m.re), stop; it != stop && at.size() < 1000; ++it)
+                    at.push_back({s + static_cast<size_t>(it->position(0)), static_cast<size_t>(it->length(0))});
+                AddHit(fh, text, at, line, context);
+            }
         }
         if (e >= text.size()) break;
         s = e + 1;

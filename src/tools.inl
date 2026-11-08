@@ -414,6 +414,7 @@ std::wstring RegexSign(const std::wstring& p) {
 }
 
 ToolOut ToolGrep(const Json& a) {
+    const auto started = std::chrono::steady_clock::now();
     GrepQuery q;
     q.pattern = ArgStr(a, "pattern");
     if (q.pattern.empty()) return {L"grep needs a pattern: the text to look for.", true};
@@ -470,9 +471,11 @@ ToolOut ToolGrep(const Json& a) {
     }
     uint64_t lines = 0;
     for (const FileHits& f : r.files) lines += f.matches;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     std::wstring head = L"grep \"" + q.pattern + L"\" in " + q.root + L": " + Thousands(lines) + (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
-                        L" files" + (r.docs ? L", " + Thousands(r.docs) + L" of them documents" : L"") + (r.fromMemory ? L", kept in memory" : L"") + L").\n";
+                        (r.searched == 1 ? L" file" : L" files") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
+                        L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" + (r.fromMemory ? L", read from Seek's memory, not the drive" : L"") + L").\n";
     std::wstring tail;
     if (r.timedOut) tail += L"Stopped at the time budget (" + std::to_wstring(q.budgetMs / 1000) + L" s): not everything was searched. Narrow path or glob, or raise time_budget_ms.\n";
     if (!r.noFilter.empty()) {
@@ -518,13 +521,33 @@ ToolOut ToolGrep(const Json& a) {
     std::wstring body;
     int index = 0, shown = 0;
     for (const FileHits& f : r.files) {
+        // Matches close together share their context: each line once, a matching one with ':' (and its windows) even
+        // as another's context, and -- between groups that don't touch, the way ripgrep does.
+        std::unordered_map<int, const LineHit*> hits;
+        for (const LineHit& h : f.lines) hits[h.line] = &h;
         std::wstring block;
+        int last = 0;  // the last line written for this file
+        auto put = [&](int n, const std::wstring& t) {
+            if (n <= last) return;
+            if (last && n > last + 1 && q.context > 0) block += L"  --\n";
+            last = n;
+            const auto it = hits.find(n);
+            if (it == hits.end()) {
+                block += L"  " + std::to_wstring(n) + L"- " + t + L"\n";
+                return;
+            }
+            const LineHit& h = *it->second;
+            block += L"  " + std::to_wstring(n) + L": " + h.text + L"\n";
+            const std::wstring pad(std::to_wstring(n).size() + 4, L' ');
+            for (const auto& [col, w] : h.more) block += pad + L"col " + std::to_wstring(col) + L": " + w + L"\n";
+            if (h.beyond) block += pad + L"(" + std::to_wstring(h.beyond) + (h.beyond == 1 ? L" more match" : L" more matches") + L" in this line)\n";
+        };
         for (const LineHit& h : f.lines) {
             if (index++ < offset) continue;
             if (shown >= limit) break;
-            for (const auto& [n, t] : h.before) block += L"  " + std::to_wstring(n) + L"- " + t + L"\n";
-            block += L"  " + std::to_wstring(h.line) + L": " + h.text + L"\n";
-            for (const auto& [n, t] : h.after) block += L"  " + std::to_wstring(n) + L"- " + t + L"\n";
+            for (const auto& [n, t] : h.before) put(n, t);
+            put(h.line, h.text);
+            for (const auto& [n, t] : h.after) put(n, t);
             ++shown;
         }
         if (!block.empty()) {

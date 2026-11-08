@@ -1,7 +1,7 @@
 """Seek's tests: the tools on test files in %TEMP%\\seek-test, and the MCP protocol over stdio through a background
 process of their own (SEEK_HOME points it at the test folder, so the one the user's agents talk to is left alone).
 Outside that folder they only read. Run: python -I tests\\test.py"""
-import io, json, os, shutil, subprocess, sys, time, zipfile
+import io, json, os, re, shutil, subprocess, sys, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXE = os.path.join(os.path.dirname(HERE), "build", "seek.exe")
@@ -100,6 +100,11 @@ put("repo/table.md", "| a | b |\n|---|---|\n")
 for i in range(25):
     put(f"pages/pagefile {i:02}.txt", "page\n")
 put("elsewhere/pagefile 99.txt", "page\n")  # the same name outside pages: left out by "pages\ pagefile"
+lines_with = lambda n, word, at: "".join(f"row {i}{' ' + word if i in at else ''}\n" for i in range(1, n + 1))
+put("ctx/near.txt", lines_with(30, "marker", {13, 15}))  # closer than twice the context
+put("ctx/dense.txt", lines_with(20, "tick", {5, 6, 8, 9}))  # four in five lines
+put("ctx/apart.txt", lines_with(30, "spot", {3, 20}))
+put("ctx/long.txt", "short\n" + "a" * 100 + ("needle7" + "b" * 263) * 6 + "\nshort\n")  # one line of 1,720 characters
 
 S = ROOT
 # ---- find, scoped to the test folder (walked: it was created after the index)
@@ -163,6 +168,27 @@ code, out = cli("grep", {"pattern": "zzqq(|", "path": S + "\\repo"})
 check("grep: a regex that doesn't compile says so", "Tried as a regex too" in out and "doesn't compile" in out, out)
 code, out = cli("grep", {"pattern": "| a |", "path": S + "\\repo"})
 check("grep: a literal | that matches stays literal", "table.md" in out and "regex sign" not in out, out)
+
+
+def numbered(out):  # the line numbers an answer writes, with ':' (a match) or '-' (context)
+    return [m.groups() for m in re.finditer(r"^  (\d+)([:-]) ", out, re.M)]
+
+
+code, out = cli("grep", {"pattern": "marker", "path": S + "\\ctx\\near.txt", "context": 3})
+check("grep: close matches share their context, each line once",
+      numbered(out) == [(str(n), ":" if n in (13, 15) else "-") for n in range(10, 19)] and "--" not in out, out)
+check("grep: the header says how long it took, and 1 file", re.search(r"\(searched 1 file in \d+ ms", out) is not None, out)
+code, out = cli("grep", {"pattern": "tick", "path": S + "\\ctx\\dense.txt", "context": 1})
+check("grep: four matches in five lines, one block", numbered(out) == [(str(n), ":" if n in (5, 6, 8, 9) else "-") for n in range(4, 11)], out)
+code, out = cli("grep", {"pattern": "spot", "path": S + "\\ctx\\apart.txt", "context": 1})
+check("grep: groups that don't touch are split by --", "  4- row 4\n  --\n  19- row 19" in out, out)
+code, out = cli("grep", {"pattern": "spot", "path": S + "\\ctx\\apart.txt", "context": 0})
+check("grep: no -- without context", "--" not in out and len(numbered(out)) == 2, out)
+for args in ({"pattern": "needle7"}, {"pattern": r"needle\d", "regex": True}):
+    code, out = cli("grep", dict(args, path=S + "\\ctx\\long.txt", context=0))
+    check("grep: a long line shows a window for each match, then counts the rest" + (" (regex)" if "regex" in args else ""),
+          [m.group(1) for m in re.finditer(r"col (\d+): …a?b*needle7", out)] == ["371", "641", "911"] and "(2 more matches in this line)" in out
+          and out.split("\n", 1)[1].count("needle7") == 4, out)
 code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": "*.cpp"})
 check("grep: glob include", "engine.cpp" in out and "notes_utf16" not in out, out)
 code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": ["!*.txt"]})
@@ -305,30 +331,30 @@ def wait(pattern, cond, timeout=10):  # the watchers see a change a moment after
 
 
 g()  # the first search walks the folder, and then it is read into memory
-out = wait("alpha", lambda o: "kept in memory" in o)
-check("cache: a folder searched again comes from memory", "kept in memory" in out and "a.txt" in out and "b.txt" in out and "c.txt" not in out, out)
+out = wait("alpha", lambda o: "from Seek's memory" in o)
+check("cache: a folder searched again comes from memory", "from Seek's memory" in out and "a.txt" in out and "b.txt" in out and "c.txt" not in out, out)
 time.sleep(0.5)
 put("live/a.txt", "beta one\n")
 out = wait("beta", lambda o: "a.txt" in o)
-check("cache: a changed file is read again", "a.txt" in out and "kept in memory" in out, out)
+check("cache: a changed file is read again", "a.txt" in out and "from Seek's memory" in out, out)
 put("live/new.txt", "alpha new\n")
 out = wait("alpha", lambda o: "new.txt" in o)
-check("cache: a new file is added", "new.txt" in out and "kept in memory" in out, out)
+check("cache: a new file is added", "new.txt" in out and "from Seek's memory" in out, out)
 os.remove(os.path.join(L, "sub", "b.txt"))
 out = wait("alpha", lambda o: "b.txt" not in o)
-check("cache: a deleted file goes", "b.txt" not in out and "kept in memory" in out, out)
+check("cache: a deleted file goes", "b.txt" not in out and "from Seek's memory" in out, out)
 os.rename(os.path.join(L, "mv"), os.path.join(L, "moved"))
 out = wait("alpha", lambda o: "moved\\f.txt" in o)
-check("cache: a renamed folder is followed", "moved\\f.txt" in out and "mv\\f.txt" not in out and "kept in memory" in out, out)
+check("cache: a renamed folder is followed", "moved\\f.txt" in out and "mv\\f.txt" not in out and "from Seek's memory" in out, out)
 put("live/ign/c2.txt", "alpha ignored too\n")
 time.sleep(1)
 out = g()
-check("cache: what .gitignore leaves out stays out", "c2.txt" not in out and "kept in memory" in out, out)
+check("cache: what .gitignore leaves out stays out", "c2.txt" not in out and "from Seek's memory" in out, out)
 put("live/.gitignore", "ign/\nnew.txt\n")
 out = wait("alpha", lambda o: "new.txt" not in o)
 check("cache: a changed .gitignore applies", "new.txt" not in out and "moved\\f.txt" in out, out)
 out = cli("grep", {"pattern": "alpha", "path": L, "ignored": True, "limit": 50}, via="--call")[1]
-check("cache: ignored still walks the folder", "c2.txt" in out and "kept in memory" not in out, out)
+check("cache: ignored still walks the folder", "c2.txt" in out and "from Seek's memory" not in out, out)
 subprocess.run([EXE, "--stop"], timeout=60)
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
