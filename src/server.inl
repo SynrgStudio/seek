@@ -87,9 +87,6 @@ bool ReadFrame(HANDLE h, std::string& s) {
 
 // ---- the daemon
 
-std::atomic<bool> g_quit{false};
-std::atomic<uint64_t> g_lastCall{0};
-
 void LoadEverything(bool build) {
     LoadRules();  // once: the watchers read the rules from other threads
     LoadUsage();
@@ -115,9 +112,10 @@ void Serve(HANDLE pipe) {
         std::string reply;
         if (!JsonParse(req, j)) {
             reply = R"({"text":"Bad request","error":true})";
+        } else if (const Json* tool = j.at("tool"); tool && tool->s == "__status") {  // seek --status, from any build
+            reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
         } else {
             const Json* b = j.at("build");
-            const Json* tool = j.at("tool");
             if (!b || b->s != kBuild) {
                 // A program of another build is asking. A newer one, or another build of this version (development):
                 // this process makes room for the one that asks. An older one, a session that was open when Seek was
@@ -145,7 +143,6 @@ void Serve(HANDLE pipe) {
             }();
             const Json* args = j.at("args");
             const Json* client = j.at("client");
-            g_lastCall = GetTickCount64();
             ToolOut out = RunTool(tool ? tool->s : "", args ? *args : empty, client ? Wide(client->s) : L"");
             reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + "}";
         }
@@ -490,6 +487,29 @@ int ReindexMain(int argc, wchar_t** argv) {
         Print(std::wstring(1, c) + L": " + Thousands(v->count) + L" names in " + took + (saved ? L"" : L", but it couldn't be saved") + L".\n");
     }
     Print(L"A running background process picks the new index up within 10 minutes.\n");
+    return 0;
+}
+
+// seek --status: how the background process is, for the user and for issues to come with the numbers.
+int StatusMain() {
+    LoadRules();
+    HANDLE h = ConnectDaemon(0);
+    if (!h) {
+        Print(L"Seek " SEEK_VERSION L": the background process isn't running. It starts with an agent's first call, or with  seek --call find {\\\"query\\\":\\\"x\\\"}\n"
+              L"Its files: " + DataDir() + L"\nSettings: " + SettingsFile() + L"\n");
+        return 1;
+    }
+    std::string reply;
+    WriteFrame(h, "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":\"__status\"}");
+    const bool got = ReadFrame(h, reply);
+    CloseHandle(h);
+    Json j;
+    const Json* t = got && JsonParse(reply, j) ? j.at("text") : nullptr;
+    if (!t) {
+        Print(L"The background process didn't answer.\n");
+        return 1;
+    }
+    Print(Wide(t->s));
     return 0;
 }
 

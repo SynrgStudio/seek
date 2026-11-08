@@ -64,6 +64,7 @@ int wmain(int argc, wchar_t** argv) {
         if (a == L"--cli") return CliMain(argc, argv, false);
         if (a == L"--call") return CliMain(argc, argv, true);
         if (a == L"--stop") return StopMain();
+        if (a == L"--status") return StatusMain();
         if (a == L"--reindex") return ReindexMain(argc, argv);
         if (a == L"--version") {
             Print(L"seek " + Wide(SEEK_VERSION) + L"\n");
@@ -76,6 +77,7 @@ int wmain(int argc, wchar_t** argv) {
                   L"  seek --cli <tool> [json]     run a tool here: find, grep or recent\n"
                   L"  seek --call <tool> [json]    the same, through the shared background process\n"
                   L"  seek --stop                  stop the background process\n"
+                  L"  seek --status                how it is: indexes, watchers, folders in memory\n"
                   L"  seek --reindex [C D ...]     walk the drives again now (only where Jolt's index isn't used)\n"
                   L"  seek --version\n"
                   L"Example: seek --cli find \"{\\\"query\\\":\\\"report .pdf\\\"}\"\n"

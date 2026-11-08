@@ -123,6 +123,7 @@ Seek's own files are in `%LOCALAPPDATA%\Seek`: its copies of the index, `activit
 seek --cli find "{\"query\":\"report .pdf\"}"      run a tool in this process
 seek --call grep "{\"pattern\":\"TODO\",\"path\":\"C:\\\\code\"}"   through the background process
 seek --reindex                                      walk the drives again now
+seek --status                                       how the background process is: indexes, watchers, folders in memory
 seek --stop                                         stop the background process
 ```
 

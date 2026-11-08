@@ -691,6 +691,68 @@ ToolOut ToolRecent(const Json& a) {
     return {head + L":\n" + list + notes + L"\n" + tail};
 }
 
+// ---- status: what the background process knows, for seek --status
+
+std::atomic<uint64_t> g_calls{0}, g_lastCall{0};  // tool calls served, and the tick of the last one
+const uint64_t g_started = GetTickCount64();
+
+std::wstring AgoTick(uint64_t tick) { return Ago(NowFt() - static_cast<int64_t>(GetTickCount64() - tick) * 10000); }
+
+std::wstring StatusText() {
+    std::wstring out = L"Seek " SEEK_VERSION L", background process " + std::to_wstring(GetCurrentProcessId()) + L", started " + AgoTick(g_started) + L", " +
+                       Thousands(g_calls) + (g_calls == 1 ? L" call served" : L" calls served") + (g_calls ? L", the last " + AgoTick(g_lastCall) : L"") + L".\n";
+    out += L"Its files: " + DataDir() + L"  (" + (g_rules.log ? L"log.txt has every call" : L"log off in seek.txt") + L")\nSettings: " + SettingsFile() +
+           (GetFileAttributesW(SettingsFile().c_str()) == INVALID_FILE_ATTRIBUTES ? L" (none: the defaults)" : L"") + L"\n";
+    out += L"Index:\n";
+    const auto vols = Volumes();
+    const std::vector<wchar_t> drives = FixedDrives();
+    for (const wchar_t c : drives) {
+        std::wstring line = L"  " + std::wstring(1, c) + L":  ";
+        std::shared_ptr<const Volume> v;
+        for (const auto& x : vols)
+            if (x->letter == c) v = x;
+        if (g_indexing & (1u << (c - L'A'))) line += L"being indexed for the first time, " + Thousands(g_indexed[c - L'A']) + L" names so far";
+        else if (!v) line += L"no index";
+        else line += Thousands(v->count) + L" names, " + (JoltHas(c) ? L"from Jolt's index" : L"Seek's own (walked again daily)") + L", taken " + Ago(v->stamp);
+        out += line + L"\n";
+    }
+    {
+        std::lock_guard lk(g_actM);
+        out += L"Since the indexes were taken: " + Thousands(g_added.size()) + L" names created (the ones deleted again left out), " + Thousands(g_removed.size()) +
+               L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go. Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
+               DateText(g_actSince) + L", saved to activity.txt every 5 min.\n";
+    }
+    std::wstring watching, missing, lost;
+    for (const wchar_t c : drives) {
+        ((g_watchAlive & (1u << (c - L'A'))) ? watching : missing) += std::wstring(1, c) + L": ";
+        if (const uint32_t n = g_lostBatches[c - L'A']) lost += std::wstring(1, c) + L": " + std::to_wstring(n) + L"  ";
+    }
+    out += L"Drive watchers: " + (watching.empty() ? L"none" : L"on " + watching) + (missing.empty() ? L"" : L"; not on " + missing + L"(tried again every 5 min)") +
+           (lost.empty() ? L"" : L"; batches of changes lost (too many at once): " + lost) + L"\n";
+    {
+        std::lock_guard lk(g_cacheM);
+        uint64_t total = 0;
+        for (const auto& f : g_folders) total += f->bytes;
+        out += L"Folders in memory for grep: " + std::to_wstring(g_folders.size()) + L", " + SizeText(total) + L" of " + SizeText(CacheBudget()) + L".\n";
+        for (const auto& f : g_folders) {
+            std::wstring line = L"  " + f->root + L"  ";
+            if (!f->ready) line += L"being read";
+            else {
+                std::shared_lock sl(f->m, std::try_to_lock);
+                line += (sl.owns_lock() ? Thousands(f->files.size()) + L" files, " : L"") + SizeText(f->bytes) + L", used " + AgoTick(f->used) +
+                        (f->stale ? L", out of date: read again on the next search" : f->dirty.empty() ? L"" : L", " + Thousands(f->dirty.size()) + L" changes to apply");
+            }
+            out += line + L"\n";
+        }
+    }
+    std::wstring jolt = L"not used (jolt = no in seek.txt, or SEEK_NO_JOLT)";
+    if (g_rules.jolt) {
+        std::lock_guard lk(g_useM);
+        jolt = g_use.empty() ? L"not found; Seek keeps its own indexes" : L"the folders it saw used (" + Thousands(g_use.size()) + L") rank the results";
+    }
+    return out + L"Jolt: " + jolt + L"\n";
+}
+
 // "0.4 ms", "12 ms", "1,234 ms"
 std::wstring Ms(double ms) {
     if (ms < 10) {
@@ -703,6 +765,8 @@ std::wstring Ms(double ms) {
 
 ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& client) {
     const auto t0 = std::chrono::steady_clock::now();
+    ++g_calls;
+    g_lastCall = GetTickCount64();
     ToolOut out;
     try {
         if (name == "find") out = ToolFind(args);

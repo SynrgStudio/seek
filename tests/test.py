@@ -415,6 +415,12 @@ out = cli("grep", {"pattern": "alpha", "path": L, "ignored": True, "limit": 50},
 check("cache: ignored still walks the folder", "c2.txt" in out and "from Seek's memory" not in out, out)
 
 
+# ---- seek --status: what the background process knows
+out = subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace")
+check("status: the background process answers", "background process" in out and "calls served" in out and "Index:" in out and "Drive watchers: on" in out, out)
+check("status: the folders in memory are listed", "Folders in memory for grep:" in out and "\n  " + L + "  " in out and "files," in out, out)
+
+
 # ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside
 def pipe_call(build):
     key = os.environ["SEEK_HOME"].replace("/", "\\").rstrip("\\").lower()  # Key(SeekHome()), hashed as InstanceTag does
@@ -438,6 +444,8 @@ time.sleep(0.5)
 code, out = cli("find", {"query": "engine.cpp", "path": S}, via="--call")
 check("daemon: and the next call starts it again", "engine.cpp" in out, out)
 subprocess.run([EXE, "--stop"], timeout=60)
+r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60)
+check("status: without the background process, it says so", r.returncode == 1 and "isn't running" in r.stdout.decode("utf-8", "replace"), r.stdout.decode("utf-8", "replace"))
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
