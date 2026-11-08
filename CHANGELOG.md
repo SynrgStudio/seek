@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4
+
+- **What was made while no background process ran is found.** At its start, the background process reads each drive's change journal (NTFS keeps one, readable without special rights) for what was made or renamed since the index was taken and is still there, the way the drive watchers would have seen it. Before, a file saved during an update, before the first agent call after logging in, or while the process was stopped, couldn't be found by name until the index was renewed. It adds about a second to the first call after a start, and `seek --status` says how many names it found. From a report: a file saved in Downloads during an update.
+- **Building Seek doesn't stop the installed one:** `build.bat` stops only a background process running from `build\seek.exe` (`seek --stop here`). Before, every build stopped the user's background process too, and with it what the watchers see.
+
 ## 0.3.3
 
 - **After an update, open sessions get the new tools without a restart.** The background process sends its version with each answer (a few bytes the agent never sees); when the session's `seek.exe` is older, it tells the client once that the tools changed, and gives it the new version's list, so new parameters and new tools can be used. Claude Code asks for the list again right away. It works from this version on: a session must already be 0.3.3 or later for a later update to reach it this way. Before, a session kept the tools it started with until it was restarted.
