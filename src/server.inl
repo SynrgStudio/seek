@@ -18,6 +18,7 @@ const char* kToolsJson = R"JSON([
   "near":{"type":"string","description":"A folder whose surroundings rank first, usually the current project."},
   "type":{"type":"string","enum":["any","file","folder"]},
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
+  "offset":{"type":"integer","minimum":0,"default":0,"description":"Skip this many results (to page): the answer gives the offset of the next ones."},
   "summary":{"type":"boolean","default":false,"description":"How many and where (counts by folder, extension and drive) instead of a list."}},
   "required":["query"]},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},

@@ -98,13 +98,17 @@ struct Found {
     std::vector<std::wstring> why;
 };
 
+// How many of the best names find ranks again by what the user is doing. The same for every call, so that the pages
+// asked for with offset come from one order and none is skipped or repeated; paging goes that far.
+constexpr size_t kRanked = 2000;
+
 ToolOut ToolFind(const Json& a) {
     const std::wstring query = Trim(ArgStr(a, "query"));
     if (query.empty()) return {L"find needs a query: a name or part of one, like \"report\", \"jolt.exe\", \".blend\" or \"*.log\".", true};
     std::wstring scope = ArgStr(a, "path"), nearDir = ArgStr(a, "near");
     if (!scope.empty()) scope = Normalize(Expand(scope));
     if (!nearDir.empty()) nearDir = Normalize(Expand(nearDir));
-    const int limit = ArgInt(a, "limit", 20, 1, 200);
+    const int limit = ArgInt(a, "limit", 20, 1, 200), offset = ArgInt(a, "offset", 0, 0, 1000000);
     const bool summary = ArgBool(a, "summary", false);
     NameQuery q = ParseNameQuery(query);
     const std::wstring type = Lower(ArgStr(a, "type"));
@@ -127,7 +131,7 @@ ToolOut ToolFind(const Json& a) {
                 if (IsUnder(x.key, scopeKey)) added.push_back(x);
     }
     const auto vols = Volumes();
-    const size_t keep = summary ? 20000 : static_cast<size_t>(std::max(limit * 10, 300));
+    const size_t keep = summary ? 20000 : kRanked;
     std::wstring buf;
     auto toFound = [&](const ScanOut& s) {
         std::vector<Found> out;
@@ -204,11 +208,25 @@ ToolOut ToolFind(const Json& a) {
         return s;
     };
     ScanOut real = indexed ? ScanIndex(vols, added, keep, scope, realMatch) : walkScan(realMatch);
+    // How many there are: what is left to show when every match was kept; otherwise the index's count, less what was
+    // dropped among the kept ones (the same path twice, private, deleted, or outside the path asked), which is about
+    // right: the others weren't looked at.
+    const bool allKept = real.best.size() >= real.total;
+    const auto isGood = [](int key) { return key > kNearFloor; };
+    const auto goodKept = std::count_if(real.best.begin(), real.best.end(), [&](const Cand& c) { return isGood(c.key); });
     std::vector<Found> found = toFound(real);
-    const auto good = std::count_if(found.begin(), found.end(), [](const Found& f) { return f.key0 > kNearFloor; });
+    const uint64_t dropped = real.best.size() - found.size();
+    const auto good = std::count_if(found.begin(), found.end(), [&](const Found& f) { return isGood(f.key0); });
+    bool exact = allKept;
+    uint64_t total;
     if (good > 0) {  // the scattered ones only say something when there is nothing else
-        found.erase(std::remove_if(found.begin(), found.end(), [](const Found& f) { return f.key0 <= kNearFloor; }), found.end());
+        found.erase(std::remove_if(found.begin(), found.end(), [&](const Found& f) { return !isGood(f.key0); }), found.end());
         real.total -= std::min<uint64_t>(real.total, scattered.load());
+        // they are kept last (best is sorted by key), so with one of them kept, every real match was
+        exact = allKept || !isGood(real.best.back().key);
+        total = exact ? found.size() : real.total - std::min<uint64_t>(real.total, goodKept - good);
+    } else {
+        total = exact ? found.size() : real.total - std::min(real.total, dropped);
     }
     bool nearOnly = false;
     if (close.mistakes >= 0 && good == 0 && !summary) {  // close names, only when no name has the letters in order
@@ -219,6 +237,10 @@ ToolOut ToolFind(const Json& a) {
         for (const Found& f : found) have.insert(f.key);
         for (Found& f : more)
             if (have.insert(f.key).second) found.push_back(std::move(f));
+        if (nearOnly) {  // the list is the close names: they are what there is to page through
+            total = found.size();
+            exact = true;
+        }
     }
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
     if (found.empty())
@@ -254,8 +276,8 @@ ToolOut ToolFind(const Json& a) {
             if (v.size() > n) v.resize(n);
             return v;
         };
-        std::wstring out = L"find \"" + query + L"\" " + where + L": " + Thousands(real.total) + L" matches" +
-                           (real.total > found.size() ? L" (grouped from the best " + Thousands(found.size()) + L" by name)" : L"") + L".\n";
+        std::wstring out = L"find \"" + query + L"\" " + where + L": " + (exact ? L"" : L"about ") + Thousands(total) + (total == 1 ? L" match" : L" matches") +
+                           (exact ? L"" : L"; the counts below are from the best " + Thousands(found.size()) + L" by name") + L".\n";
         auto rows = [&](const std::vector<std::pair<int, std::wstring>>& v) {
             std::wstring s;
             for (const auto& [c, k] : v)
@@ -315,13 +337,22 @@ ToolOut ToolFind(const Json& a) {
         if ((x.percent == 0) != (y.percent == 0)) return x.percent == 0;
         return x.key0 + x.boost > y.key0 + y.boost;
     });
+    // gone since the index was taken: not shown, and not counted (one that can't be read is still there)
+    auto exists = [](const Found& f, WIN32_FILE_ATTRIBUTE_DATA& d) { return FileInfo(f.path, d) || GetLastError() == ERROR_ACCESS_DENIED; };
     std::wstring list;
-    int shown = 0;
-    for (const Found& f : found) {
-        if (shown >= limit) break;
+    int shown = 0, skipped = 0;  // skipped: the ones before offset
+    uint64_t gone = 0;
+    size_t next = 0;  // where this page ended in found
+    for (; next < found.size() && shown < limit; ++next) {
+        const Found& f = found[next];
         WIN32_FILE_ATTRIBUTE_DATA d{};
-        if (!FileInfo(f.path, d)) {
-            if (GetLastError() != ERROR_ACCESS_DENIED) continue;  // gone since the index was taken
+        if (!exists(f, d)) {
+            ++gone;
+            continue;
+        }
+        if (skipped < offset) {
+            ++skipped;
+            continue;
         }
         std::wstring line = Relative(f.path, scope);
         if (f.dir || (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) line += L"\\  ·  folder";
@@ -334,13 +365,37 @@ ToolOut ToolFind(const Json& a) {
         list += line + L"\n";
         ++shown;
     }
-    if (!shown) return {L"Nothing named like \"" + query + L"\" " + where + L" still exists (the index had some that are gone)."};
+    // Is there a next one in the list? Looked for only that far: checking a file the disk hasn't cached reads it, and
+    // checking them all took most of a second on a hard drive. So the count can drop by one when a later page finds a
+    // file deleted while Seek wasn't running (the ones deleted while it runs are left out already).
+    bool hasNext = false;
+    for (; next < found.size() && !hasNext; ++next) {
+        WIN32_FILE_ATTRIBUTE_DATA d{};
+        if (exists(found[next], d)) hasNext = true;
+        else ++gone;
+    }
+    const uint64_t matches = total - std::min(total, gone);
+    const uint64_t after = matches - std::min<uint64_t>(matches, static_cast<uint64_t>(skipped) + shown);  // after this page
+    const std::wstring count = (exact ? L"" : L"about ") + Thousands(matches) + (matches == 1 ? L" match" : L" matches");
     std::wstring head = L"find \"" + query + L"\" " + where + (scope.empty() ? L"" : L" (paths below it)") + L": ";
-    if (nearOnly) head += L"no name has those letters in order; these are close (typo-tolerant):\n";
-    else head += Thousands(real.total) + (real.total == 1 ? L" match" : L" matches") + (static_cast<uint64_t>(shown) < real.total ? L", the best " + std::to_wstring(shown) : L"") + L":\n";
+    if (!shown) {
+        if (!skipped && !offset) return {L"Nothing named like \"" + query + L"\" " + where + L" still exists (the index had some that are gone)."};
+        if (after) return {head + count + L"; paging goes through the best " + Thousands(kRanked) + L" by name, and offset " + std::to_wstring(offset) +
+                           L" is past them. Narrow the query, add path, or use summary for counts.\n" + building};
+        return {head + count + L", so offset " + std::to_wstring(offset) + L" is past the last one.\n" + building};
+    }
+    if (nearOnly) head += L"no name has those letters in order; these are close (typo-tolerant)";
+    else head += count;
+    if (skipped) head += L", " + std::to_wstring(skipped + 1) + L" to " + std::to_wstring(skipped + shown);
+    else if (after && !nearOnly) head += L", the best " + std::to_wstring(shown);
+    head += L":\n";
     std::wstring tail;
-    if (static_cast<uint64_t>(shown) < real.total && !nearOnly)
-        tail = L"(" + Thousands(real.total - shown) + L" more: narrow the query, add path, use summary for counts, or raise limit up to 200.)\n";
+    if (after) {
+        tail = L"(" + Thousands(after) + (nearOnly ? L" more close names" : L" more");
+        if (hasNext) tail += L": offset=" + std::to_wstring(skipped + shown) + L" for the next ones" + (nearOnly ? L"" : L"; or narrow the query, add path, or use summary for counts");
+        else tail += L" past the best " + Thousands(kRanked) + L" by name: narrow the query, add path, or use summary for counts";
+        tail += L".)\n";
+    }
     return {head + list + tail + building};
 }
 

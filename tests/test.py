@@ -96,6 +96,9 @@ put("repo/.git/info/exclude", "excluded_dir/\n")
 put("repo/excluded_dir/x.txt", "brown fox left out by info/exclude\n")
 put("repo/.ignore", "dotignored.txt\n")
 put("repo/dotignored.txt", "brown fox left out by .ignore\n")
+for i in range(25):
+    put(f"pages/pagefile {i:02}.txt", "page\n")
+put("elsewhere/pagefile 99.txt", "page\n")  # the same name outside pages: left out by "pages\ pagefile"
 
 S = ROOT
 # ---- find, scoped to the test folder (walked: it was created after the index)
@@ -111,6 +114,29 @@ code, out = cli("find", {"query": "*.cpp", "path": S, "summary": True})
 check("find: summary counts", "By area" in out and "By extension" in out, out)
 code, out = cli("find", {"query": "zzzqqqxxx", "path": S})
 check("find: nothing says so", out.startswith("Nothing named like"), out)
+
+
+def names(out):  # the results of a find answer, without its header and its "more" line
+    return [l.split("  ")[0] for l in out.splitlines()[1:] if l and not l.startswith("(")]
+
+
+PAGES = {"query": "pages\\ pagefile", "path": S}  # the path part leaves one out: it isn't counted either
+code, out = cli("find", dict(PAGES, limit=10))
+page1 = names(out)
+check("find: a first page says how to get the next", "25 matches, the best 10:" in out and "(15 more: offset=10 " in out and len(page1) == 10, out)
+code, out = cli("find", dict(PAGES, limit=10, offset=10))
+page2 = names(out)
+check("find: offset gives the next page", "25 matches, 11 to 20:" in out and "offset=20 " in out and len(page2) == 10, out)
+code, out = cli("find", dict(PAGES, limit=10, offset=20))
+page3 = names(out)
+check("find: the last page says no more", "25 matches, 21 to 25:" in out and "more" not in out and len(page3) == 5, out)
+code, out = cli("find", dict(PAGES, limit=25))
+check("find: the pages are the whole list, in order", page1 + page2 + page3 == names(out), out)
+check("find: limit at the count shows them all, no more", out.splitlines()[0].endswith("25 matches:") and "more" not in out, out)
+code, out = cli("find", dict(PAGES, offset=30))
+check("find: an offset past the end says so", "offset 30 is past the last one" in out, out)
+code, out = cli("find", dict(PAGES, summary=True))
+check("find: summary counts what it shows", out.splitlines()[0].endswith(": 25 matches.") and "about" not in out, out)
 
 # ---- grep
 code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo"})
