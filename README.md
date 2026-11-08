@@ -59,6 +59,7 @@ The installer:
 
 - downloads `seek.exe` from the latest release into `%LOCALAPPDATA%\Programs\Seek`;
 - checks it against the release's SHA-256;
+- puts that folder on your PATH, so `seek --status` works in a console;
 - adds it to **Claude Code** and **Codex** when they are installed.
 
 Running it again updates Seek, with agent sessions open too: they get the new version from their next call.

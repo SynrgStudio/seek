@@ -4,7 +4,8 @@
     Installs Seek: fast file search for AI agents on Windows, as an MCP server.
 .DESCRIPTION
     Downloads seek.exe from the latest GitHub release into %LOCALAPPDATA%\Programs\Seek, checks it against the
-    release's SHA-256, and adds it to Claude Code and Codex when they are installed. Running it again updates Seek.
+    release's SHA-256, adds that folder to the user's PATH, and adds Seek to Claude Code and Codex when they are
+    installed. Running it again updates Seek.
 
         irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex
 
@@ -13,10 +14,13 @@
     A release to install, like 0.1.0. Default: the latest.
 .PARAMETER NoRegister
     Only install; don't add Seek to the MCP clients found.
+.PARAMETER NoPath
+    Don't add Seek's folder to the user's PATH.
 #>
 param(
     [string]$Version = $env:SEEK_INSTALL_VERSION,
-    [switch]$NoRegister
+    [switch]$NoRegister,
+    [switch]$NoPath
 )
 
 # Run through "irm | iex", this script shares the console's scope: what it changes there is put back at the end.
@@ -59,6 +63,30 @@ try {
     if ($old) { Remove-Item $old -Force -ErrorAction SilentlyContinue }
     Write-Host "Installed $(& $exe --version) in $exe" -ForegroundColor Green
     if ($old -and (Test-Path $old)) { Write-Host 'Agent sessions already open use it from their next call; restart them to see what is new in the tools.' }
+
+    # On the user's PATH, so that "seek --status" and "seek --version" work in a console. The value is read and written
+    # as the registry keeps it, with its %VARIABLES% unexpanded, and the shell is told, so new consoles have it.
+    if (-not $NoPath) {
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        try {
+            $userPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $entries = @($userPath -split ';' | Where-Object { $_ })
+            $there = $entries | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $dir }
+            if (-not $there) {
+                $kind = if ($envKey.GetValueNames() -contains 'Path') { $envKey.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+                $envKey.SetValue('Path', (@($entries) + $dir) -join ';', $kind)
+                if (-not ('SeekInstall.Win' -as [type])) {
+                    Add-Type -Namespace SeekInstall -Name Win -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
+                }
+                $r = [UIntPtr]::Zero
+                [SeekInstall.Win]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r) | Out-Null  # WM_SETTINGCHANGE
+                Write-Host "Added $dir to your PATH: seek --status works in consoles opened from now on."
+            }
+        } finally {
+            $envKey.Close()
+        }
+        if (-not ($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq $dir })) { $env:Path = "$env:Path;$dir" }  # and in this one
+    }
 
     if (-not $NoRegister) {
         # what a client writes to stderr isn't the installer failing: Windows PowerShell would stop on it otherwise
