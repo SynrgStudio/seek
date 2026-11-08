@@ -480,9 +480,11 @@ ToolOut ToolRecent(const Json& a) {
         bool folder = false;
     };
     std::unordered_map<std::wstring, Item> items;
+    RepoIgnore ignore;  // build outputs and the like: what a repository's .gitignore leaves out is churn too
     auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder) {
         const std::wstring k = Key(path);
         if (t < from || Private(k) || (!scope.empty() && !IsUnder(k, scopeKey)) || (!system && NoiseBelow(k, scopeKey))) return;
+        if (!system && !folder && ignore.Check(path, false)) return;  // a folder the user opened in Jolt always counts
         if (!query.empty()) {
             const std::wstring leaf = LeafOf(path);
             int sc;
@@ -509,7 +511,9 @@ ToolOut ToolRecent(const Json& a) {
         const uint64_t deadline = GetTickCount64() + 3000;
         WalkTree(scope, deadline, [&](const std::wstring& p, const WIN32_FIND_DATAW& fd) {
             const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            if (dir) return !JunkDirs().count(Lower(fd.cFileName)) && !Private(Key(p)) && Key(p) != Key(DataDir());  // not Seek's own files
+            if (dir)
+                return !JunkDirs().count(Lower(fd.cFileName)) && !Private(Key(p)) && Key(p) != Key(DataDir()) &&  // not Seek's own files
+                       (system || !ignore.Check(p, true));
             add(p, Ft(fd.ftLastWriteTime), L"modified", false);
             return false;
         });
@@ -540,7 +544,7 @@ ToolOut ToolRecent(const Json& a) {
                 (scope.empty() ? L"Seek only knows what changed while it was running. Pass path to read dates from disk.\n" : L"")};
     std::wstring tail;
     if (v.size() > static_cast<size_t>(shown)) tail = L"(more: raise limit, narrow with query or path.)\n";
-    if (!system) tail += L"System places (AppData, Windows, Program Files, temp, caches) are left out; include_system shows them.\n";
+    if (!system) tail += L"System places (AppData, Windows, Program Files, temp, caches) and what .gitignore leaves out are left out; include_system shows them.\n";
     return {head + L":\n" + list + notes + L"\n" + tail};
 }
 

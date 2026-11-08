@@ -140,6 +140,46 @@ IgnChain IgnoresAbove(const std::wstring& root) {
     return chain;
 }
 
+// Is a path left out by the ignore files of the repository it is in, itself or a folder on the way to it? Outside a
+// repository nothing is. The answers are kept per folder, for a tool that asks about many paths (recent).
+class RepoIgnore {
+public:
+    bool Check(const std::wstring& path, bool dir) {
+        const std::wstring parent = ParentOf(path);
+        if (parent.empty() || parent.size() >= path.size()) return false;
+        const Dir* d = Get(parent);
+        if (!d) return false;
+        return d->ignored || Ignored(d->chain, Key(path), Lower(LeafOf(path)), dir);
+    }
+
+private:
+    struct Dir {
+        bool inRepo = false, ignored = false;
+        IgnChain chain;  // the rules for its entries
+    };
+    std::unordered_map<std::wstring, Dir> dirs_;  // by key; pointers to its elements stay valid as it grows
+
+    const Dir* Get(const std::wstring& dir) {
+        const std::wstring key = Key(dir);
+        if (auto it = dirs_.find(key); it != dirs_.end()) return it->second.inRepo ? &it->second : nullptr;
+        Dir d;
+        if (GetFileAttributesW(Join(dir, L".git").c_str()) != INVALID_FILE_ATTRIBUTES) {  // a repository's root
+            d.inRepo = true;
+            AddIgnores(dir, d.chain);
+        } else if (dir.size() > 3) {
+            const std::wstring up = ParentOf(dir);
+            if (const Dir* p = up.empty() || up.size() >= dir.size() ? nullptr : Get(up)) {
+                d.inRepo = true;
+                d.ignored = p->ignored || Ignored(p->chain, key, Lower(LeafOf(dir)), true);
+                d.chain = p->chain;
+                if (!d.ignored) AddIgnores(dir, d.chain);
+            }
+        }
+        Dir& slot = dirs_[key] = std::move(d);
+        return slot.inRepo ? &slot : nullptr;
+    }
+};
+
 // ---- reading
 
 const std::unordered_set<std::wstring>& JunkDirs() {

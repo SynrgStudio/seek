@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `recent` leaves out what a repository's `.gitignore` leaves out, such as build outputs and generated sites, the same way it leaves out caches. The folders opened in Jolt always count, and `include_system` shows everything.
+- **The installer:**
+  - It finds Claude Code where its own installer puts it, `%USERPROFILE%\.localin`, even when that folder isn't on PATH.
+  - It says what happened with each client.
+  - It leaves the console's settings as they were.
+
 ## 0.1.0
 
 The first release, as a repository of its own. Seek began in [Jolt](https://github.com/SynrgStudio/jolt)'s repository and shares its fuzzy matching and its drive index.

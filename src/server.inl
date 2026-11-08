@@ -41,7 +41,7 @@ const char* kToolsJson = R"JSON([
   "required":["pattern","path"]},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
 {"name":"recent","title":"What the user worked on lately",
- "description":"Files the user created or changed lately and folders they opened in Jolt, newest first: what they are working on. Machine-wide from what Seek saw change while running (kept between runs); with path, also the dates on disk below that folder. System places are left out unless include_system.",
+ "description":"Files the user created or changed lately and folders they opened in Jolt, newest first: what they are working on. Machine-wide from what Seek saw change while running (kept between runs); with path, also the dates on disk below that folder. System places, and what .gitignore leaves out, are left out unless include_system.",
  "inputSchema":{"type":"object","properties":{
   "path":{"type":"string","description":"Only below this folder; also reads the dates on disk there."},
   "query":{"type":"string","description":"Only names like this (same syntax as find), like \".docx\" or \"invoice\"."},
