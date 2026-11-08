@@ -401,6 +401,18 @@ ToolOut ToolFind(const Json& a) {
 
 // ---- grep
 
+// The first sign of a regex in a pattern, or empty: when the literal text matches nothing, it is tried as one, since
+// an agent that wrote a|b most likely forgot regex: true.
+std::wstring RegexSign(const std::wstring& p) {
+    if (p.find(L'|') != std::wstring::npos) return L"|";
+    for (const wchar_t* s : {L".*", L".+", L"\\d", L"\\w", L"\\s", L"\\b", L"\\.", L"\\("})
+        if (p.find(s) != std::wstring::npos) return s;
+    if (p.size() > 1 && p[0] == L'^') return L"^";
+    if (p.size() > 1 && p.back() == L'$') return L"$";
+    if (const size_t o = p.find(L'['); o != std::wstring::npos && p.find(L']', o + 2) != std::wstring::npos) return L"[ ]";
+    return L"";
+}
+
 ToolOut ToolGrep(const Json& a) {
     GrepQuery q;
     q.pattern = ArgStr(a, "pattern");
@@ -443,6 +455,19 @@ ToolOut ToolGrep(const Json& a) {
             r = std::move(r2);
         }
     }
+    const std::wstring sign = q.regex ? L"" : RegexSign(q.pattern);
+    std::wstring regexMiss;  // what trying it as a regex said, when that found nothing either
+    if (r.files.empty() && !sign.empty() && !r.timedOut) {  // the literal text said no: what it finds as a regex
+        GrepQuery q2 = q;
+        q2.regex = true;
+        GrepResult r2 = RunGrep(q2);
+        if (!r2.error.empty()) regexMiss = L"Tried as a regex too (" + sign + L" is a regex sign): " + r2.error + L"\n";
+        else if (r2.files.empty()) regexMiss = L"Nothing as a regex either (" + sign + L" is a regex sign).\n";
+        else {
+            note = L"No match for the literal text; " + sign + L" is a regex sign, so as a regex (regex: true):\n";
+            r = std::move(r2);
+        }
+    }
     uint64_t lines = 0;
     for (const FileHits& f : r.files) lines += f.matches;
     std::wstring head = L"grep \"" + q.pattern + L"\" in " + q.root + L": " + Thousands(lines) + (lines == 1 ? L" matching line" : L" matching lines") +
@@ -461,6 +486,10 @@ ToolOut ToolGrep(const Json& a) {
     }
     if (r.files.empty()) {
         std::wstring out = head + tail;
+        if (!sign.empty()) {  // not a file's name
+            out += regexMiss.empty() ? sign + L" is a regex sign: pass regex: true to use it as one.\n" : regexMiss;
+            return {out};
+        }
         if (q.pattern.find_first_of(L" \\/") == std::wstring::npos && g_indexReady) {  // maybe it is a file's name
             Json fa;
             fa.kind = Json::Obj;

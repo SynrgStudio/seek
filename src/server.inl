@@ -23,7 +23,7 @@ const char* kToolsJson = R"JSON([
   "required":["query"]},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
 {"name":"grep","title":"Search text inside files",
- "description":"Search the text inside the files of a folder (or one file): code and text in any encoding, and PDF/Office documents when Windows has a text filter for them. Follows .gitignore (and .git/info/exclude, the user's global excludes and .ignore) and skips dependency and cache folders and binaries, unless ignored is true; a path inside an ignored folder is searched as asked. Literal by default and case-insensitive unless the pattern has capitals; regex for a pattern. Each match shows its line with line numbers; context adds lines around.",
+ "description":"Search the text inside the files of a folder (or one file): code and text in any encoding, and PDF/Office documents when Windows has a text filter for them. Follows .gitignore (and .git/info/exclude, the user's global excludes and .ignore) and skips dependency and cache folders and binaries, unless ignored is true; a path inside an ignored folder is searched as asked. Literal by default and case-insensitive unless the pattern has capitals; regex for a pattern (a literal one that finds nothing but has regex signs, like a|b, is tried as a regex and the answer says so). Each match shows its line with line numbers; context adds lines around.",
  "inputSchema":{"type":"object","properties":{
   "pattern":{"type":"string","description":"The text to look for (or a regex with regex: true)."},
   "path":{"type":"string","description":"The folder or file to search in."},

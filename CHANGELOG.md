@@ -5,6 +5,7 @@
 - **`find`:**
   - `offset` pages through the results, and each answer gives the offset of the next ones ([#1](https://github.com/SynrgStudio/seek/issues/1)). Every call ranks the same best 2,000 names, so the pages don't skip or repeat any.
   - The count is what there is to show. The same path twice, private places, deleted files and names outside a path fragment aren't counted any more, so a `limit` at the count shows them all, and "more" appears only when there is a next one ([#2](https://github.com/SynrgStudio/seek/issues/2)). When there are too many to count one by one, it says "about".
+- **`grep`:** a literal pattern that finds nothing but has regex signs, like `a|b`, is tried as a regex, and the answer says so.
 - `recent` leaves out what a repository's `.gitignore` leaves out, such as build outputs and generated sites, the same way it leaves out caches. The folders opened in Jolt always count, and `include_system` shows everything.
 - **The installer:**
   - It finds Claude Code where its own installer puts it, `%USERPROFILE%\.local\bin`, even when that folder isn't on PATH.
