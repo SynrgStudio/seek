@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 - **`grep` takes `without`:** the lines that also have that text are left out, like `grep -v` after the search. Literal, or a regex when `regex` is true, with the pattern's case rule. For leaving out declarations, comments or tests when the matches are many.
 
