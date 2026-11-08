@@ -5,6 +5,7 @@
 - **A session's tool calls run at the same time,** each on a thread and a connection of its own. Before, a session's calls were served one after the other, so a `find` sent during a slow `grep` waited for it ([#13](https://github.com/SynrgStudio/seek/issues/13)).
 - **`find` follows a renamed folder:** what is inside is walked (with a budget) and counts as created since the index, and what the index lists under the old name is hidden. Before, after `mv old new` nothing inside `new` could be found until the index was renewed ([#16](https://github.com/SynrgStudio/seek/issues/16)).
 - **A drive whose watcher couldn't start** (a BitLocker drive still locked, a drive that appears later) is tried again every five minutes. Before, its changes went unseen until the background process restarted ([#15](https://github.com/SynrgStudio/seek/issues/15)).
+- **`grep` searches a file over 16 MB when it is the path given,** reading it in parts along line boundaries, with the line numbers and the context as if it were read whole. The limit stays for the files met on a walk of a folder, which are named as not read ([#8](https://github.com/SynrgStudio/seek/issues/8)).
 
 ## 0.2.2
 

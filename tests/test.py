@@ -105,7 +105,11 @@ put("ctx/near.txt", lines_with(30, "marker", {13, 15}))  # closer than twice the
 put("ctx/dense.txt", lines_with(20, "tick", {5, 6, 8, 9}))  # four in five lines
 put("ctx/apart.txt", lines_with(30, "spot", {3, 20}))
 put("ctx/long.txt", "short\n" + "a" * 100 + ("needle7" + "b" * 263) * 6 + "\nshort\n")  # one line of 1,720 characters
-put("bigs/huge.log", "filler\n" * 2500000)  # 17.5 MB: over what grep reads
+rows = ["filler"] * 2500000  # 17.5 MB: over what grep reads whole; given directly, it is read in parts of 8 MB
+rows[1198370] = "needle a, the last whole line of the first part"  # line 1198371: waits for its context after
+rows[1198371] = "needle b, the line the first part ends in"  # line 1198372: its bytes are in both parts
+rows[1250000] = "needle c, in the middle"  # line 1250001
+put("bigs/huge.log", "\n".join(rows) + "\nneedle d, at the end")  # line 2500001, with no line break after it
 put("bigs/small.log", "filler\n")
 
 S = ROOT
@@ -186,10 +190,15 @@ code, out = cli("grep", {"pattern": "Engine", "path": S + "\\repo", "glob": "*.{
 check("grep: braces in a glob", "engine.cpp" in out and "engine.h" in out and "searched 2 files" in out, out)
 code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": "*.nothing"})
 check("grep: a glob that leaves every file out says so", "the glob left every file out" in out, out)
-code, out = cli("grep", {"pattern": "filler", "path": S + "\\bigs\\huge.log"})
-check("grep: a file over 16 MB given directly is named as not read", "1 file over 16 MB wasn't read: huge.log (17 MB)" in out, out)
-code, out = cli("grep", {"pattern": "filler", "path": S + "\\bigs"})
-check("grep: a file over 16 MB met on a walk is named too", "small.log" in out and "wasn't read: huge.log (17 MB)" in out, out)
+code, out = cli("grep", {"pattern": "needle", "path": S + "\\bigs\\huge.log", "context": 1})
+check("grep: a file over 16 MB given directly is read in parts, the lines numbered as a whole",
+      "4 matching lines in 1 file" in out and all(f"{n}: needle {w}" in out for n, w in ((1198371, "a"), (1198372, "b"), (1250001, "c"), (2500001, "d"))), out)
+check("grep: and the context across the parts", "1198370- filler" in out and "1198373- filler" in out and "1250000- filler" in out and "1250002- filler" in out
+      and "2500000- filler" in out, out)
+code, out = cli("grep", {"pattern": "needle [ab]", "path": S + "\\bigs\\huge.log", "regex": True, "context": 0})
+check("grep: a regex over a file read in parts", "2 matching lines" in out and "1198371: needle a" in out and "1198372: needle b" in out, out)
+code, out = cli("grep", {"pattern": "needle", "path": S + "\\bigs"})
+check("grep: a file over 16 MB met on a walk is named as not read", "wasn't read: huge.log (17 MB)" in out, out)
 
 
 def numbered(out):  # the line numbers an answer writes, with ':' (a match) or '-' (context)

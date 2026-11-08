@@ -314,6 +314,21 @@ ReadOutcome ReadRaw(const std::wstring& path, uint64_t size, Raw& raw) {
     return ReadOutcome::Ok;
 }
 
+// Bytes without a mark: UTF-8, or the system code page when they aren't valid UTF-8.
+void DecodeMultiByte(const char* b, size_t n, std::wstring& out) {
+    const int len = static_cast<int>(n);
+    UINT cp = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    int w = len ? MultiByteToWideChar(cp, flags, b, len, nullptr, 0) : 0;
+    if (w == 0 && len) {
+        cp = CP_ACP;
+        flags = 0;
+        w = MultiByteToWideChar(cp, flags, b, len, nullptr, 0);
+    }
+    out.resize(static_cast<size_t>(w));
+    if (w) MultiByteToWideChar(cp, flags, b, len, out.data(), w);
+}
+
 // The text in a file's bytes, in whichever encoding they are: UTF-16 with its mark, UTF-8, or the system code page.
 // NoMatch: the pattern can't be in it, so it wasn't decoded.
 ReadOutcome DecodeBytes(const char* b, size_t got, std::wstring& out, const BytePre* pre) {
@@ -329,17 +344,7 @@ ReadOutcome DecodeBytes(const char* b, size_t got, std::wstring& out, const Byte
     }
     const size_t start = got >= 3 && u[0] == 0xEF && u[1] == 0xBB && u[2] == 0xBF ? 3 : 0;
     if (pre && pre->on && !BytesMayMatch(*pre, b + start, got - start)) return ReadOutcome::NoMatch;
-    const int len = static_cast<int>(got - start);
-    UINT cp = CP_UTF8;
-    DWORD flags = MB_ERR_INVALID_CHARS;
-    int n = len ? MultiByteToWideChar(cp, flags, b + start, len, nullptr, 0) : 0;
-    if (n == 0 && len) {
-        cp = CP_ACP;
-        flags = 0;
-        n = MultiByteToWideChar(cp, flags, b + start, len, nullptr, 0);
-    }
-    out.resize(n);
-    if (n) MultiByteToWideChar(cp, flags, b + start, len, out.data(), n);
+    DecodeMultiByte(b + start, got - start, out);
     return ReadOutcome::Ok;
 }
 
@@ -542,7 +547,10 @@ struct Matcher {
     std::wregex re;
 };
 
-void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int perFile, int context) {
+// The matching lines of text[from, to), the first line of text being firstLine; the context around them may come from
+// outside that range (a file read in parts keeps the lines around each part at hand).
+void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int perFile, int context, size_t from = 0, size_t to = std::wstring::npos,
+                int firstLine = 1) {
     if (!m.regex) {
         std::wstring lowered;
         if (m.icase) {
@@ -550,10 +558,10 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
             if (!lowered.empty()) CharLowerBuffW(lowered.data(), static_cast<DWORD>(lowered.size()));
         }
         const std::wstring& hay = m.icase ? lowered : text;
-        size_t pos = 0, counted = 0;
-        int line = 1;
+        size_t pos = from, counted = 0;
+        int line = firstLine;
         std::vector<std::pair<size_t, size_t>> at;
-        while ((pos = hay.find(m.pat, pos)) != std::wstring::npos) {
+        while ((pos = hay.find(m.pat, pos)) != std::wstring::npos && pos < to) {
             line += static_cast<int>(std::count(text.begin() + counted, text.begin() + pos, L'\n'));
             counted = pos;
             ++fh.matches;
@@ -571,14 +579,14 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         return;
     }
     size_t s = 0;
-    int line = 1;
-    while (s <= text.size()) {
+    int line = firstLine;
+    while (s <= text.size() && s < to) {
         size_t e = text.find(L'\n', s);
         if (e == std::wstring::npos) e = text.size();
         const wchar_t* b = text.data() + s;
         const wchar_t* end = text.data() + std::min(e, s + 4096);  // very long lines: their start
         std::wcmatch mm;
-        if (std::regex_search(b, end, mm, m.re)) {
+        if (e > from && std::regex_search(b, end, mm, m.re)) {  // a line before `from` is context, searched already
             ++fh.matches;
             if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it matches
                 std::vector<std::pair<size_t, size_t>> at;
@@ -591,6 +599,120 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
         s = e + 1;
         ++line;
     }
+}
+
+// ---- a file too big to read whole, when it is the path given
+
+// Where the n-th line before `end` begins (end being a line's start, or the text's end).
+size_t LinesBack(const std::wstring& text, size_t end, int n) {
+    size_t p = end;
+    for (int k = 0; k < n && p > 0; ++k) {
+        const size_t nl = p >= 2 ? text.rfind(L'\n', p - 2) : std::wstring::npos;
+        p = nl == std::wstring::npos ? 0 : nl + 1;
+    }
+    return p;
+}
+
+// Just past the n-th line break from `start`, or the text's end.
+size_t LinesOn(const std::wstring& text, size_t start, int n) {
+    size_t p = start;
+    for (int k = 0; k < n && p < text.size(); ++k) {
+        const size_t nl = text.find(L'\n', p);
+        p = nl == std::wstring::npos ? text.size() : nl + 1;
+    }
+    return p;
+}
+
+enum : int { kEncUnknown, kEncUtf16Le, kEncUtf16Be, kEncBytes };
+
+// Just past the last line break in b[0, n), or 0 without one.
+size_t LastBreak(const std::string& b, size_t n, int encoding) {
+    if (encoding == kEncBytes) {
+        const size_t at = std::string_view(b.data(), n).rfind('\n');
+        return at == std::string::npos ? 0 : at + 1;
+    }
+    for (size_t i = n & ~size_t{1}; i >= 2;) {
+        i -= 2;
+        if (encoding == kEncUtf16Le ? (b[i] == '\n' && b[i + 1] == 0) : (b[i] == 0 && b[i + 1] == '\n')) return i + 2;
+    }
+    return 0;
+}
+
+void DecodePart(const std::string& b, size_t n, int encoding, std::wstring& out) {
+    if (encoding == kEncBytes) return DecodeMultiByte(b.data(), n, out);
+    const auto* u = reinterpret_cast<const unsigned char*>(b.data());
+    out.resize(n / 2);
+    for (size_t i = 0; i < out.size(); ++i)
+        out[i] = encoding == kEncUtf16Le ? static_cast<wchar_t>(u[2 * i] | (u[2 * i + 1] << 8)) : static_cast<wchar_t>((u[2 * i] << 8) | u[2 * i + 1]);
+}
+
+// The file is read in parts of 8 MB, each cut at a line break, and each part is searched with the lines around it at
+// hand: the last lines of a part wait for the next one, so that their context after is there, and the lines before
+// them come along as context. The line numbers and the context are the same as if the file were read whole. A
+// literal pattern isn't found across a line break. cut: the time budget ended it.
+ReadOutcome StreamFile(const Matcher& m, const BytePre& pre, const std::wstring& path, FileHits& fh, int perFile, int context, uint64_t deadline,
+                       bool& cut) {
+    HANDLE h = CreateFileW(LongPath(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return ReadOutcome::Fail;
+    constexpr size_t kPart = 8u << 20, kLineMax = 64u << 20;
+    std::string bytes;    // read and not yet taken: the start of the line the last part ended in, then the next part
+    std::wstring carry;   // kept from the last part: lines of context, then the lines still to search
+    size_t searchFrom = 0;  // where those lines begin in carry
+    int lineBase = 1;       // the line number of carry's first line
+    int encoding = kEncUnknown;
+    bool eof = false;
+    ReadOutcome outcome = ReadOutcome::Ok;
+    while (!eof) {
+        if (GetTickCount64() > deadline) {
+            cut = true;
+            break;
+        }
+        const size_t have = bytes.size();
+        bytes.resize(have + kPart);
+        DWORD got = 0;
+        if (!ReadFile(h, bytes.data() + have, static_cast<DWORD>(kPart), &got, nullptr)) {
+            outcome = ReadOutcome::Fail;
+            break;
+        }
+        bytes.resize(have + got);
+        eof = got < kPart;
+        if (encoding == kEncUnknown) {
+            const auto* u = reinterpret_cast<const unsigned char*>(bytes.data());
+            if (bytes.size() >= 2 && u[0] == 0xFF && u[1] == 0xFE) encoding = kEncUtf16Le;
+            else if (bytes.size() >= 2 && u[0] == 0xFE && u[1] == 0xFF) encoding = kEncUtf16Be;
+            else encoding = kEncBytes;
+            if (encoding != kEncBytes) bytes.erase(0, 2);
+            else if (bytes.size() >= 3 && u[0] == 0xEF && u[1] == 0xBB && u[2] == 0xBF) bytes.erase(0, 3);
+            if (encoding == kEncBytes && memchr(bytes.data(), 0, std::min<size_t>(bytes.size(), 8000))) {
+                outcome = ReadOutcome::Binary;
+                break;
+            }
+        }
+        const size_t complete = eof || bytes.size() > kLineMax ? bytes.size() : LastBreak(bytes, bytes.size(), encoding);
+        if (complete == 0) continue;  // the line goes on: read more
+        std::wstring part;
+        DecodePart(bytes, complete, encoding, part);
+        if (encoding != kEncBytes || !pre.on || BytesMayMatch(pre, bytes.data(), complete)) {
+            std::wstring text = carry + part;
+            const size_t hold = eof ? text.size() : LinesBack(text, text.size(), context);  // wait for their context after
+            FindInText(m, text, fh, perFile, context, searchFrom, hold, lineBase);
+            const size_t keepFrom = LinesBack(text, hold, context);
+            lineBase += static_cast<int>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(keepFrom), L'\n'));
+            carry = text.substr(keepFrom);
+            searchFrom = hold - keepFrom;
+        } else {  // the pattern isn't in this part: only the lines waiting from the last one can match
+            const std::wstring text = carry + part.substr(0, LinesOn(part, 0, context));
+            FindInText(m, text, fh, perFile, context, searchFrom, carry.size(), lineBase);
+            const size_t tail = LinesBack(part, part.size(), context);
+            lineBase += static_cast<int>(std::count(carry.begin(), carry.end(), L'\n') + std::count(part.begin(), part.begin() + static_cast<std::ptrdiff_t>(tail), L'\n'));
+            carry = part.substr(tail);
+            searchFrom = carry.size();
+        }
+        bytes.erase(0, complete);
+    }
+    CloseHandle(h);
+    return outcome;
 }
 
 bool GlobsPass(const GrepQuery& q, const std::wstring& nameKey, const std::wstring& relKey) {
@@ -801,7 +923,24 @@ GrepResult RunGrep(const GrepQuery& q) {
                            DocExts().count(ExtOf(nameKey)) != 0, false};
         std::thread([&] {  // with COM ready, for a document's filter
             const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            searchFile(one);
+            if (!one.doc && one.size > kTextMax) {  // the file asked for, over what is read whole: in parts
+                FileHits fh;
+                fh.path = one.path;
+                bool cut = false;
+                const ReadOutcome r = StreamFile(m, pre, one.path, fh, q.perFile, q.context, deadline, cut);
+                if (r == ReadOutcome::Binary) ++binaries;
+                if (r == ReadOutcome::Fail) {
+                    ++unreadable;
+                    res.unreadableFiles.push_back(one.path);
+                }
+                if (r == ReadOutcome::Ok) {
+                    ++searched;
+                    if (fh.matches) res.files.push_back(std::move(fh));
+                    if (cut) done = false;
+                }
+            } else {
+                searchFile(one);
+            }
             if (SUCCEEDED(co)) CoUninitialize();
         }).join();
     } else {
