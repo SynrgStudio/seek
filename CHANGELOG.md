@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- **`grep` shows more around a match:** `before` and `after` set each side apart, up to 200 lines, and `block` shows the whole block a match opens, up to the line that closes it, like a function's body after its signature. The block is told by indentation and brackets, so the same rule serves braces on the line (Rust, Go, JavaScript), on the next one (C#, C++), none (Python), and `end` (Ruby, Lua), up to 300 lines. Before, `context` went up to 5 lines on both sides, and reading a function found by its signature took the shell.
+
 ## 0.3.1
 
 - **`grep` takes `without`:** the lines that also have that text are left out, like `grep -v` after the search. Literal, or a regex when `regex` is true, with the pattern's case rule. For leaving out declarations, comments or tests when the matches are many.
