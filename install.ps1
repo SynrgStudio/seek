@@ -62,7 +62,7 @@ try {
     Move-Item -Path $download -Destination $exe
     if ($old) { Remove-Item $old -Force -ErrorAction SilentlyContinue }
     Write-Host "Installed $(& $exe --version) in $exe" -ForegroundColor Green
-    if ($old -and (Test-Path $old)) { Write-Host 'Agent sessions already open use it from their next call; restart them to see what is new in the tools.' }
+    if ($old -and (Test-Path $old)) { Write-Host 'Agent sessions already open use it from their next call (from 0.3.3 on, with its new tools too; an older one needs a restart for those).' }
 
     # On the user's PATH, so that "seek --status" and "seek --version" work in a console. The value is read and written
     # as the registry keeps it, with its %VARIABLES% unexpanded, and the shell is told, so new consoles have it.

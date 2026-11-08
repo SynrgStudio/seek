@@ -109,6 +109,19 @@ void LoadEverything(bool build) {
 // "0.2.1" at the start of a build string ("0.2.1 Nov  8 2026 03:08:40"), as numbers.
 bool ParseVersion(const std::string& s, int v[3]) { return sscanf_s(s.c_str(), "%d.%d.%d", &v[0], &v[1], &v[2]) == 3; }
 
+// Is version a (like "0.3.3") older than b?
+bool VersionBefore(const std::string& a, const std::string& b) {
+    int x[3], y[3];
+    return ParseVersion(a, x) && ParseVersion(b, y) && std::lexicographical_compare(x, x + 3, y, y + 3);
+}
+
+// This version's tools, on one line (a JSON-RPC message is one line).
+std::string ToolsLine() {
+    std::string tools(kToolsJson);
+    std::replace(tools.begin(), tools.end(), '\n', ' ');
+    return tools;
+}
+
 void Serve(HANDLE pipe) {
     std::string req;
     while (ReadFrame(pipe, req)) {
@@ -118,16 +131,15 @@ void Serve(HANDLE pipe) {
             reply = R"({"text":"Bad request","error":true})";
         } else if (const Json* tool = j.at("tool"); tool && tool->s == "__status") {  // seek --status, from any build
             reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
+        } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
+            reply = "{\"tools\":" + ToolsLine() + "}";
         } else {
             const Json* b = j.at("build");
             if (!b || b->s != kBuild) {
                 // A program of another build is asking. A newer one, or another build of this version (development):
                 // this process makes room for the one that asks. An older one, a session that was open when Seek was
                 // updated, is served: what passes between them hasn't changed, and it gets this version's answers.
-                int theirs[3], mine[3];
-                const bool older = b && ParseVersion(b->s, theirs) && ParseVersion(SEEK_VERSION, mine) &&
-                                   std::lexicographical_compare(theirs, theirs + 3, mine, mine + 3);
-                if (!older) {
+                if (!b || !VersionBefore(b->s, SEEK_VERSION)) {
                     WriteFrame(pipe, R"({"restart":true})");
                     FlushFileBuffers(pipe);
                     ActSave();
@@ -148,7 +160,9 @@ void Serve(HANDLE pipe) {
             const Json* args = j.at("args");
             const Json* client = j.at("client");
             ToolOut out = RunTool(tool ? tool->s : "", args ? *args : empty, client ? Wide(client->s) : L"");
-            reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + "}";
+            // with its version: a session of an older one learns from it that there are newer tools (a few bytes, read
+            // by the session's seek.exe, never by the agent)
+            reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + ",\"version\":\"" SEEK_VERSION "\"}";
         }
         if (!WriteFrame(pipe, reply)) break;
     }
@@ -278,6 +292,43 @@ void LocalReady() {
     std::call_once(once, [] { LoadEverything(false); });
 }
 
+void Send(const std::string& msg);
+std::atomic<bool> g_mcp{false};  // speaking MCP on stdio (not the command line)
+std::mutex g_newerM;
+std::string g_newer;  // the version of a newer background process, once one answered: its tools are the ones to give
+
+// A background process answered with its version. When it is newer than this program (Seek was updated while this
+// session was open), the client is told the tools changed, once per version, and asks for them again: the answer to
+// tools/list then comes from the background process, so the agent sees what the new version can do.
+void NoteDaemonVersion(const std::string& v) {
+    if (!g_mcp || !VersionBefore(SEEK_VERSION, v)) return;
+    {
+        std::lock_guard lk(g_newerM);
+        if (g_newer == v) return;
+        g_newer = v;
+    }
+    Send(R"({"jsonrpc":"2.0","method":"notifications/tools/list_changed"})");
+}
+
+// The newer background process's tools, or nothing (this program's own are the ones, then).
+std::string NewerTools() {
+    {
+        std::lock_guard lk(g_newerM);
+        if (g_newer.empty()) return "";
+    }
+    HANDLE pipe = ConnectDaemon(2000);
+    if (!pipe) return "";
+    std::string reply;
+    const bool got = WriteFrame(pipe, "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":\"__tools\"}") && ReadFrame(pipe, reply);
+    CloseHandle(pipe);
+    Json j;
+    const Json* tools = got && JsonParse(reply, j) ? j.at("tools") : nullptr;
+    if (!tools || tools->kind != Json::Arr || tools->a.empty()) return "";
+    std::string out;
+    JsonWrite(*tools, out);
+    return out;
+}
+
 // One tool call: through the daemon (starting it if needed), or here. On a connection of its own, since the calls of
 // one session run at the same time, as the agent sends them.
 ToolOut CallTool(const std::string& tool, const Json& args, const std::wstring& client) {
@@ -301,6 +352,7 @@ ToolOut CallTool(const std::string& tool, const Json& args, const std::wstring& 
             WaitDaemonGone();
             continue;
         }
+        if (const Json* v = j.at("version"); v && v->kind == Json::Str) NoteDaemonVersion(v->s);
         const Json* t = j.at("text");
         const Json* e = j.at("error");
         return {t ? Wide(t->s) : L"", e && e->b};
@@ -359,18 +411,24 @@ std::string Handle(const Json& msg, std::wstring& client) {
             if (const Json* ci = params->at("clientInfo"))
                 if (const Json* n = ci->at("name"); n && n->kind == Json::Str) client = Wide(n->s);
         return head + "\"result\":{\"protocolVersion\":" + JsonQuote(version) +
-               ",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"seek\",\"title\":\"Seek\",\"version\":\"" SEEK_VERSION
+               ",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"seek\",\"title\":\"Seek\",\"version\":\"" SEEK_VERSION
                "\",\"websiteUrl\":\"https://seek.synrgs.tech\"},\"instructions\":" + JsonQuote(kInstructions) + "}}";
     }
     if (m == "tools/list") {
-        std::string tools(kToolsJson);
-        std::replace(tools.begin(), tools.end(), '\n', ' ');  // one message per line
+        std::string tools = NewerTools();  // after Seek was updated, the new version's
+        if (tools.empty()) tools = ToolsLine();
         return head + "\"result\":{\"tools\":" + tools + "}}";
     }
     if (m == "tools/call") {
         const Json* name = params ? params->at("name") : nullptr;
         const Json* args = params ? params->at("arguments") : nullptr;
-        if (!name || name->kind != Json::Str || (name->s != "find" && name->s != "grep" && name->s != "recent"))
+        bool newer;
+        {
+            std::lock_guard lk(g_newerM);
+            newer = !g_newer.empty();
+        }
+        // a tool this version doesn't know may be a newer one's: then the background process answers for it
+        if (!name || name->kind != Json::Str || (name->s != "find" && name->s != "grep" && name->s != "recent" && !newer))
             return error(-32602, "Unknown tool: " + (name && name->kind == Json::Str ? name->s : std::string("(none)")) + ". The tools are find, grep and recent.");
         if (args && args->kind != Json::Obj && args->kind != Json::Null) return error(-32602, "The arguments must be an object.");
         static const Json empty = [] {
@@ -410,6 +468,7 @@ void Answer(const Json& msg, std::wstring& client) {
 }
 
 int McpMain() {
+    g_mcp = true;
     std::wstring client;
     std::string buf, line;
     char chunk[65536];

@@ -309,6 +309,7 @@ def rpc(obj):
     return json.loads(p.stdout.readline().decode("utf-8"))
 r = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "seek-test", "version": "1"}}})
 check("mcp: initialize", r.get("result", {}).get("serverInfo", {}).get("name") == "seek" and "instructions" in r["result"], json.dumps(r))
+check("mcp: it says its tools can change (after an update)", r["result"]["capabilities"]["tools"]["listChanged"] is True, json.dumps(r))
 rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
 r = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
 names = [t["name"] for t in r.get("result", {}).get("tools", [])]
@@ -459,12 +460,12 @@ check("status: the folders in memory are listed", "Folders in memory for grep:" 
 
 
 # ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside
-def pipe_call(build):
+def pipe_call(build, tool="find"):
     key = os.environ["SEEK_HOME"].replace("/", "\\").rstrip("\\").lower()  # Key(SeekHome()), hashed as InstanceTag does
     h = 2166136261
     for ch in key:
         h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
-    req = json.dumps({"build": build, "tool": "find", "args": {"query": "engine.cpp", "path": S}, "client": "test"}).encode()
+    req = json.dumps({"build": build, "tool": tool, "args": {"query": "engine.cpp", "path": S}, "client": "test"}).encode()
     with open(r"\\.\pipe\seek-%s-%08x" % (os.environ["USERNAME"], h), "r+b", buffering=0) as p:
         p.write(len(req).to_bytes(4, "little") + req)
         data = b""
@@ -475,6 +476,9 @@ def pipe_call(build):
 
 r = pipe_call("0.0.1 Jan  1 2026 00:00:00")
 check("daemon: a session of an older Seek is served", "engine.cpp" in r.get("text", ""), json.dumps(r)[:300])
+check("daemon: and told its version, so the session can tell its client the tools changed", r.get("version", "").count(".") == 2, json.dumps(r)[:300])
+r = pipe_call("0.0.1 Jan  1 2026 00:00:00", "__tools")
+check("daemon: gives an older session its tools", [t["name"] for t in r.get("tools", [])] == ["find", "grep", "recent"], json.dumps(r)[:300])
 r = pipe_call("99.0.0 Jan  1 2030 00:00:00")
 check("daemon: a session of a newer Seek makes it step aside", r.get("restart") is True, json.dumps(r)[:300])
 time.sleep(0.5)
