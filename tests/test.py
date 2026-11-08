@@ -105,6 +105,14 @@ put("ctx/near.txt", lines_with(30, "marker", {13, 15}))  # closer than twice the
 put("ctx/dense.txt", lines_with(20, "tick", {5, 6, 8, 9}))  # four in five lines
 put("ctx/apart.txt", lines_with(30, "spot", {3, 20}))
 put("ctx/long.txt", "short\n" + "a" * 100 + ("needle7" + "b" * 263) * 6 + "\nshort\n")  # one line of 1,720 characters
+RS = ["// a header", "pub fn short_one() -> u32 {", "    1", "}", "", "pub fn target_fn(", "    a: u32,", "    b: u32,", ") -> u32 {",
+      "    let mut x = a + b;", "    if x > 10 {", "        x -= 1;", "    }", ""] + [f"    x += {i};" for i in range(40)] + ["    x", "}", "",
+      "fn after_target() -> u32 {", "    2", "}"]
+put("blocks/code.rs", "\n".join(RS) + "\n")
+put("blocks/code.cpp", "int helper() { return 1; }\n\nvoid target_cpp(int a)\n{\n    if (a) {\n        a++;\n    }\n}\n\nint other() { return 2; }\n")
+put("blocks/code.py", "class A:\n    def target_py(self, x):\n        y = x + 1\n\n        return y\n\n    def other(self):\n        pass\n")
+put("blocks/code.rb", "def target_rb(x)\n  x + 1\nend\n\ndef other_rb\nend\n")
+put("blocks/huge.rs", "fn huge_block() {\n" + "".join(f"    step({i});\n" for i in range(400)) + "}\n")
 rows = ["filler"] * 2500000  # 17.5 MB: over what grep reads whole; given directly, it is read in parts of 8 MB
 rows[1198370] = "needle a, the last whole line of the first part"  # line 1198371: waits for its context after
 rows[1198371] = "needle b, the line the first part ends in"  # line 1198372: its bytes are in both parts
@@ -224,6 +232,26 @@ code, out = cli("grep", {"pattern": "spot", "path": S + "\\ctx\\apart.txt", "con
 check("grep: groups that don't touch are split by --", "  4- row 4\n  --\n  19- row 19" in out, out)
 code, out = cli("grep", {"pattern": "spot", "path": S + "\\ctx\\apart.txt", "context": 0})
 check("grep: no -- without context", "--" not in out and len(numbered(out)) == 2, out)
+B = S + "\\blocks"
+sig, close = RS.index("pub fn target_fn(") + 1, len(RS) - 4  # line numbers: the signature's, and its closing brace's
+code, out = cli("grep", {"pattern": "fn target_fn", "path": B + "\\code.rs", "context": 0, "block": True})
+check("grep: block shows a function's whole body, signature over several lines (Rust)",
+      numbered(out) == [(str(n), ":" if n == sig else "-") for n in range(sig, close + 1)] and "after_target" not in out, out)
+code, out = cli("grep", {"pattern": "fn target_fn", "path": B + "\\code.rs", "before": 0, "after": 40})
+check("grep: after alone, past context's 5", numbered(out) == [(str(n), ":" if n == sig else "-") for n in range(sig, sig + 41)], out)
+code, out = cli("grep", {"pattern": "fn target_fn", "path": B + "\\code.rs", "before": 2, "after": 0})
+check("grep: before alone", numbered(out) == [(str(sig - 2), "-"), (str(sig - 1), "-"), (str(sig), ":")], out)
+code, out = cli("grep", {"pattern": "target_cpp", "path": B + "\\code.cpp", "context": 0, "block": True})
+check("grep: block with the brace on the next line (C++)", [n for n, _ in numbered(out)] == [str(n) for n in range(3, 9)] and "other" not in out, out)
+code, out = cli("grep", {"pattern": "helper", "path": B + "\\code.cpp", "context": 0, "block": True})
+check("grep: block of a line that opens and closes it: just the line", numbered(out) == [("1", ":")], out)
+code, out = cli("grep", {"pattern": "def target_py", "path": B + "\\code.py", "context": 0, "block": True})
+check("grep: block by indentation (Python), blank lines inside kept, at its end left out",
+      numbered(out) == [("2", ":"), ("3", "-"), ("4", "-"), ("5", "-")] and "other" not in out, out)
+code, out = cli("grep", {"pattern": "def target_rb", "path": B + "\\code.rb", "context": 0, "block": True})
+check("grep: block closed by end (Ruby)", numbered(out) == [("1", ":"), ("2", "-"), ("3", "-")], out)
+code, out = cli("grep", {"pattern": "fn huge_block", "path": B + "\\huge.rs", "context": 0, "block": True})
+check("grep: a block over 300 lines says it goes on", len(numbered(out)) == 301 and "(the block goes on past 300 lines)" in out, out)
 for args in ({"pattern": "needle7"}, {"pattern": r"needle\d", "regex": True}):
     code, out = cli("grep", dict(args, path=S + "\\ctx\\long.txt", context=0))
     check("grep: a long line shows a window for each match, then counts the rest" + (" (regex)" if "regex" in args else ""),

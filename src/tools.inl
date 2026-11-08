@@ -446,7 +446,10 @@ ToolOut ToolGrep(const Json& a) {
             if (g.size() > 1 && g[0] == L'!') q.exclude.push_back(g.substr(1));
             else q.include.push_back(g);
         }
-    q.context = ArgInt(a, "context", 1, 0, 5);
+    const int around = ArgInt(a, "context", 1, 0, 5);  // both sides; before and after set one each, further
+    q.context.before = ArgInt(a, "before", around, 0, 200);
+    q.context.after = ArgInt(a, "after", around, 0, 200);
+    q.context.block = ArgBool(a, "block", false);
     q.perFile = ArgInt(a, "per_file", 5, 1, 200);
     q.documents = ArgBool(a, "documents", true);
     q.hidden = ArgBool(a, "hidden", false);
@@ -562,7 +565,7 @@ ToolOut ToolGrep(const Json& a) {
         int last = 0;  // the last line written for this file
         auto put = [&](int n, const std::wstring& t) {
             if (n <= last) return;
-            if (last && n > last + 1 && q.context > 0) block += L"  --\n";
+            if (last && n > last + 1 && (q.context.before || q.context.after || q.context.block)) block += L"  --\n";
             last = n;
             const auto it = hits.find(n);
             if (it == hits.end()) {
@@ -581,6 +584,7 @@ ToolOut ToolGrep(const Json& a) {
             for (const auto& [n, t] : h.before) put(n, t);
             put(h.line, h.text);
             for (const auto& [n, t] : h.after) put(n, t);
+            if (h.blockCut) block += L"  (the block goes on past " + std::to_wstring(kBlockMax) + L" lines)\n";
             ++shown;
         }
         if (!block.empty()) {

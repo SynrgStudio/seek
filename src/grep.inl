@@ -448,7 +448,17 @@ struct LineHit {
     std::vector<std::pair<size_t, std::wstring>> more;  // a long line: around the matches past that, by column
     int beyond = 0;  // and the matches past those
     std::vector<std::pair<int, std::wstring>> before, after;
+    bool blockCut = false;  // the block it opens goes on past what is shown
 };
+
+// The lines shown around a match.
+struct Around {
+    int before = 1, after = 1;
+    bool block = false;  // after it: the block the matching line opens, instead of `after` lines
+    int Ahead() const;   // how many lines after a match its context can take
+};
+constexpr int kBlockMax = 300;  // lines of a block, at most
+int Around::Ahead() const { return block ? kBlockMax : after; }
 struct FileHits {
     std::wstring path;
     int matches = 0;  // lines that match
@@ -462,7 +472,8 @@ struct GrepQuery {
     bool regex = false, ignoreCase = true, documents = true, hidden = false;
     bool ignored = false;  // also what .gitignore leaves out, and dependency and cache folders
     std::vector<std::wstring> include, exclude;  // lowercase globs: on the name, or on the path below root with a '\'
-    int context = 1, perFile = 5;
+    Around context;
+    int perFile = 5;
     uint64_t budgetMs = 6000;
 };
 
@@ -496,8 +507,74 @@ std::wstring LineAround(const std::wstring& text, size_t s, size_t e, size_t col
     return Window(text, s, e, from, std::min(e, from + kWide));
 }
 
+// ---- a block: what a line opens, like a function's body after its signature. Told by indentation and brackets, so
+// the same rule serves braces on the line (Rust, Go, JS), on the next one (C#, C++), and none (Python), and "end".
+
+int IndentOf(const std::wstring& t, size_t s, size_t e) {
+    int w = 0;
+    for (size_t i = s; i < e && (t[i] == L' ' || t[i] == L'\t'); ++i) w += t[i] == L'\t' ? 4 - w % 4 : 1;
+    return w;
+}
+int BracketsOf(const std::wstring& t, size_t s, size_t e) {  // opened less closed; strings and comments aren't told apart
+    int n = 0;
+    for (size_t i = s; i < e; ++i) {
+        const wchar_t c = t[i];
+        if (c == L'{' || c == L'(' || c == L'[') ++n;
+        else if (c == L'}' || c == L')' || c == L']') --n;
+    }
+    return n;
+}
+bool BlankLine(const std::wstring& t, size_t s, size_t e) {
+    for (size_t i = s; i < e; ++i)
+        if (t[i] != L' ' && t[i] != L'\t' && t[i] != L'\r') return false;
+    return true;
+}
+bool ClosesBlock(const std::wstring& t, size_t s, size_t e) {  // starts with a closing bracket, "end" or "</"
+    while (s < e && (t[s] == L' ' || t[s] == L'\t')) ++s;
+    if (s >= e) return false;
+    if (t[s] == L'}' || t[s] == L')' || t[s] == L']') return true;
+    if (e - s >= 2 && t[s] == L'<' && t[s + 1] == L'/') return true;
+    return e - s >= 3 && t.compare(s, 3, L"end") == 0 && (e - s == 3 || !iswalnum(t[s + 3]));
+}
+
+// The lines after a matching line [s, e) that belong to the block it opens: the ones indented deeper, the ones inside
+// a bracket it (or a line after it) opens, and the line that closes them. Blank lines at its end are left out.
+void AddBlock(LineHit& h, const std::wstring& text, size_t s, size_t e) {
+    const int indent = IndentOf(text, s, e);
+    int depth = BracketsOf(text, s, e), k = 0;
+    bool opened = depth > 0, ended = false;
+    size_t ae = e, kept = 0;
+    while (ae < text.size() && k < kBlockMax) {
+        const size_t ns = ae + 1;
+        size_t ne = text.find(L'\n', ns);
+        if (ne == std::wstring::npos) ne = text.size();
+        ++k;
+        ae = ne;
+        if (BlankLine(text, ns, ne)) {
+            h.after.push_back({h.line + k, L""});
+            continue;
+        }
+        const int in = IndentOf(text, ns, ne), net = BracketsOf(text, ns, ne);
+        if (in <= indent && depth <= 0 && net <= 0 && !ClosesBlock(text, ns, ne)) {  // back where the match is: not in it
+            --k;
+            ended = true;
+            break;
+        }
+        h.after.push_back({h.line + k, LineAround(text, ns, ne, ns)});
+        kept = h.after.size();
+        depth += net;
+        opened = opened || net > 0;
+        if (opened && depth <= 0 && in <= indent) {  // the line that closes it
+            ended = true;
+            break;
+        }
+    }
+    h.after.resize(kept);
+    h.blockCut = !ended && ae < text.size();
+}
+
 // A matching line, with its context. at: where its matches start, and how long they are (the first one at least).
-void AddHit(FileHits& fh, const std::wstring& text, const std::vector<std::pair<size_t, size_t>>& at, int line, int context) {
+void AddHit(FileHits& fh, const std::wstring& text, const std::vector<std::pair<size_t, size_t>>& at, int line, const Around& context) {
     LineHit h;
     h.line = line;
     const size_t pos = at[0].first;
@@ -524,20 +601,24 @@ void AddHit(FileHits& fh, const std::wstring& text, const std::vector<std::pair<
         }
     }
     size_t bs = s;
-    for (int k = 1; k <= context && bs > 0; ++k) {
+    for (int k = 1; k <= context.before && bs > 0; ++k) {
         const size_t pe = bs - 1;
         size_t ps = text.rfind(L'\n', pe == 0 ? 0 : pe - 1);
         ps = (ps == std::wstring::npos || pe == 0) ? 0 : ps + 1;
         h.before.insert(h.before.begin(), {line - k, LineAround(text, ps, pe, ps)});
         bs = ps;
     }
-    size_t ae = e;
-    for (int k = 1; k <= context && ae < text.size(); ++k) {
-        const size_t ns = ae + 1;
-        size_t ne = text.find(L'\n', ns);
-        if (ne == std::wstring::npos) ne = text.size();
-        h.after.push_back({line + k, LineAround(text, ns, ne, ns)});
-        ae = ne;
+    if (context.block) {
+        AddBlock(h, text, s, e);
+    } else {
+        size_t ae = e;
+        for (int k = 1; k <= context.after && ae < text.size(); ++k) {
+            const size_t ns = ae + 1;
+            size_t ne = text.find(L'\n', ns);
+            if (ne == std::wstring::npos) ne = text.size();
+            h.after.push_back({line + k, LineAround(text, ns, ne, ns)});
+            ae = ne;
+        }
     }
     fh.lines.push_back(std::move(h));
 }
@@ -563,8 +644,8 @@ bool LeftOut(const Matcher& m, const std::wstring& text, const std::wstring& hay
 
 // The matching lines of text[from, to), the first line of text being firstLine; the context around them may come from
 // outside that range (a file read in parts keeps the lines around each part at hand).
-void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int perFile, int context, size_t from = 0, size_t to = std::wstring::npos,
-                int firstLine = 1) {
+void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int perFile, const Around& context, size_t from = 0,
+                size_t to = std::wstring::npos, int firstLine = 1) {
     if (!m.regex) {
         std::wstring lowered;
         if (m.icase) {
@@ -667,8 +748,8 @@ void DecodePart(const std::string& b, size_t n, int encoding, std::wstring& out)
 // hand: the last lines of a part wait for the next one, so that their context after is there, and the lines before
 // them come along as context. The line numbers and the context are the same as if the file were read whole. A
 // literal pattern isn't found across a line break. cut: the time budget ended it.
-ReadOutcome StreamFile(const Matcher& m, const BytePre& pre, const std::wstring& path, FileHits& fh, int perFile, int context, uint64_t deadline,
-                       bool& cut) {
+ReadOutcome StreamFile(const Matcher& m, const BytePre& pre, const std::wstring& path, FileHits& fh, int perFile, const Around& context,
+                       uint64_t deadline, bool& cut) {
     HANDLE h = CreateFileW(LongPath(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                            FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (h == INVALID_HANDLE_VALUE) return ReadOutcome::Fail;
@@ -712,16 +793,16 @@ ReadOutcome StreamFile(const Matcher& m, const BytePre& pre, const std::wstring&
         DecodePart(bytes, complete, encoding, part);
         if (encoding != kEncBytes || !pre.on || BytesMayMatch(pre, bytes.data(), complete)) {
             std::wstring text = carry + part;
-            const size_t hold = eof ? text.size() : LinesBack(text, text.size(), context);  // wait for their context after
+            const size_t hold = eof ? text.size() : LinesBack(text, text.size(), context.Ahead());  // wait for their context after
             FindInText(m, text, fh, perFile, context, searchFrom, hold, lineBase);
-            const size_t keepFrom = LinesBack(text, hold, context);
+            const size_t keepFrom = LinesBack(text, hold, context.before);
             lineBase += static_cast<int>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(keepFrom), L'\n'));
             carry = text.substr(keepFrom);
             searchFrom = hold - keepFrom;
         } else {  // the pattern isn't in this part: only the lines waiting from the last one can match
-            const std::wstring text = carry + part.substr(0, LinesOn(part, 0, context));
+            const std::wstring text = carry + part.substr(0, LinesOn(part, 0, context.Ahead()));
             FindInText(m, text, fh, perFile, context, searchFrom, carry.size(), lineBase);
-            const size_t tail = LinesBack(part, part.size(), context);
+            const size_t tail = LinesBack(part, part.size(), context.before);
             lineBase += static_cast<int>(std::count(carry.begin(), carry.end(), L'\n') + std::count(part.begin(), part.begin() + static_cast<std::ptrdiff_t>(tail), L'\n'));
             carry = part.substr(tail);
             searchFrom = carry.size();
