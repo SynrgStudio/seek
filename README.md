@@ -98,7 +98,7 @@ flowchart LR
   - A changed file is read again on the next search, new files are added, and deleted ones dropped.
   - A changed `.gitignore` makes the folder be read again.
   - A folder nobody searched for 20 minutes is let go.
-- **The process.** Every session's `seek.exe` hands its calls to one background process through a named pipe that only the same user on the same machine can open. A process from an older build makes way for a newer one.
+- **The process.** Every session's `seek.exe` hands its calls to one background process through a named pipe that only the same user on the same machine can open, each call on a connection of its own, so the calls an agent sends at once run at once. A process from an older build makes way for a newer one, and serves the sessions of older ones. `seek --status` says how it is.
 
 The website explains each part in depth, with the measurements behind every design choice: [seek.synrgs.tech](https://seek.synrgs.tech).
 
