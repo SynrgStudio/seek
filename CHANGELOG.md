@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 - **`grep`:**
   - Matches close together share their context: each line is written once, a matching one with `:` even as another's context, and `--` splits the groups that don't touch, the way ripgrep does. Before, each match wrote its whole block, so the lines between two close matches came out twice or more.
