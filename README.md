@@ -64,6 +64,20 @@ The installer:
 
 Running it again updates Seek, with agent sessions open too: they get the new version from their next call.
 
+Installed before 0.3.3, or by hand? This puts Seek's folder on your PATH, so `seek --status` and `seek --version` work in a console. It leaves the rest of your PATH as it is and does nothing if the folder is there already:
+
+```powershell
+$d = "$env:LOCALAPPDATA\Programs\Seek"
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$p = $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+if (-not ($p -split ';' | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $d })) {
+    $kind = if ($k.GetValueNames() -contains 'Path') { $k.GetValueKind('Path') } else { 'ExpandString' }
+    $k.SetValue('Path', ((@($p -split ';' | Where-Object { $_ }) + $d) -join ';'), $kind)
+    [Environment]::SetEnvironmentVariable('SEEK_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('SEEK_PATH', $null, 'User')
+}
+$k.Close(); $env:Path += ";$d"
+```
+
 For any other MCP client, such as Cursor, Cline or Claude Desktop, add a stdio server whose command is the full path to `seek.exe`, with no arguments:
 
 ```json

@@ -72,6 +72,16 @@
 <div class="install">
 <pre><code>irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex</code></pre>
 <p class="cap">In PowerShell. It downloads <code>seek.exe</code> from the latest release into <code>%LOCALAPPDATA%\Programs\Seek</code>, checks it against the release's SHA-256, puts that folder on your PATH, and adds it to Claude Code and Codex when they are installed. Running it again updates Seek, with agent sessions open too: they get the new version from their next call. For other clients, see <a href="#setup">setup</a>.</p>
+<pre><code>$d = "$env:LOCALAPPDATA\Programs\Seek"
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$p = $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+if (-not ($p -split ';' | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $d })) {
+    $kind = if ($k.GetValueNames() -contains 'Path') { $k.GetValueKind('Path') } else { 'ExpandString' }
+    $k.SetValue('Path', ((@($p -split ';' | Where-Object { $_ }) + $d) -join ';'), $kind)
+    [Environment]::SetEnvironmentVariable('SEEK_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('SEEK_PATH', $null, 'User')
+}
+$k.Close(); $env:Path += ";$d"</code></pre>
+<p class="cap">Installed before 0.3.3, or by hand? This puts Seek's folder on your PATH, so <code>seek --status</code> and <code>seek --version</code> work in a console. It leaves the rest of your PATH as it is, does nothing if the folder is there already, and works at once in this console and in the ones you open after.</p>
 </div>
 
 <h2 id="summary"><span class="n">1</span>Summary</h2>
