@@ -1,0 +1,191 @@
+"""Seek's tests: the tools on test files in %TEMP%\\seek-test, and the MCP protocol over stdio through the shared
+background process. Only reads outside that folder. Run: python -I seek\\test.py"""
+import io, json, os, shutil, subprocess, sys, time, zipfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+EXE = os.path.join(HERE, "build", "seek.exe")
+TMP = os.environ["TEMP"]
+ROOT = os.path.join(TMP, "seek-test")
+fails = 0
+
+
+def check(name, ok, detail=""):
+    global fails
+    print(("PASS  " if ok else "FAIL  ") + name + ("" if ok else "\n      " + detail.replace("\n", "\n      ")[:1500]))
+    fails += 0 if ok else 1
+
+
+def cli(tool, args, via="--cli"):
+    r = subprocess.run([EXE, via, tool, json.dumps(args)], capture_output=True, timeout=120)
+    return r.returncode, r.stdout.decode("utf-8", "replace")
+
+
+def put(rel, data):
+    p = os.path.join(ROOT, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, "wb").write(data if isinstance(data, bytes) else data.encode("utf-8"))
+    return p
+
+
+def docx(text):
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+        z.writestr("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+        z.writestr("word/document.xml", '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   '<w:body><w:p><w:r><w:t>' + text + '</w:t></w:r></w:p></w:body></w:document>')
+    return b.getvalue()
+
+
+def pdf(text):
+    """A one-page PDF with that text, written by hand (no library): enough for Windows' PDF filter."""
+    stream = f"BT /F1 24 Tf 72 700 Td ({text}) Tj ET".encode("latin-1")
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
+shutil.rmtree(ROOT, ignore_errors=True)
+os.makedirs(os.path.join(ROOT, "repo", ".git"))
+put("docs/lease.pdf", pdf("The brown fox signs the lease for the burrow"))
+put("repo/.gitignore", "build/\n*.log\n!keep.log\n")
+put("repo/src/engine.cpp", "int Engine() {\n    // the quick brown fox\n    return 42;\n}\nvoid RenderFrame() {}\n")
+put("repo/src/engine.h", "int Engine();\nvoid RenderFrame();\n")
+put("repo/src/notes_utf16.txt", "﻿brown fox in utf-16\n".encode("utf-16-le"))
+put("repo/src/cancion.txt", "la canción del zorro marrón\n".encode("cp1252"))
+put("repo/build/out.txt", "brown fox in an ignored folder\n")
+put("repo/debug.log", "brown fox in an ignored file\n")
+put("repo/keep.log", "brown fox kept by a ! rule\n")
+put("repo/node_modules/pkg/index.js", "brown fox in dependencies\n")
+put("repo/blob.bin", b"brown fox\x00\x01\x02 in a binary")
+put("repo/many.txt", "".join(f"line {i} needle\n" for i in range(60)))
+put("docs/contract.docx", docx("The tenant pays the brown fox fee every month"))
+put("docs/Informe Final 2026.txt", "informe\n")
+
+S = ROOT
+# ---- find, scoped to the test folder (walked: it was created after the index)
+code, out = cli("find", {"query": "engine", "path": S})
+check("find: by name in a folder", "repo\\src\\engine.cpp" in out and "repo\\src\\engine.h" in out, out)
+code, out = cli("find", {"query": "informe final", "path": S})
+check("find: two words", "Informe Final 2026.txt" in out, out)
+code, out = cli("find", {"query": "engnie", "path": S})
+check("find: a typo still finds it", "engine" in out and "close to what was typed" in out, out)
+code, out = cli("find", {"query": ".docx", "path": S})
+check("find: by extension", "contract.docx" in out and "engine" not in out, out)
+code, out = cli("find", {"query": "*.cpp", "path": S, "summary": True})
+check("find: summary counts", "By area" in out and "By extension" in out, out)
+code, out = cli("find", {"query": "zzzqqqxxx", "path": S})
+check("find: nothing says so", out.startswith("Nothing named like"), out)
+# ---- find on all drives, from the index
+t0 = time.time()
+code, out = cli("find", {"query": "notepad.exe", "limit": 5})
+check("find: everywhere, a program first", "notepad.exe" in out.lower() and "program" in out, out)
+print("      (find on all drives, cold, %.2f s)" % (time.time() - t0))
+
+# ---- grep
+code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo"})
+check("grep: finds the text", "engine.cpp" in out and "2: // the quick brown fox" in out, out)
+check("grep: other encodings", "notes_utf16.txt" in out, out)
+check("grep: .gitignore folders and files", "out.txt" not in out and "debug.log" not in out, out)
+check("grep: ! rule in .gitignore", "keep.log" in out, out)
+check("grep: dependencies skipped", "node_modules" not in out, out)
+check("grep: binaries skipped", "blob.bin" not in out, out)
+code, out = cli("grep", {"pattern": "canción", "path": S + "\\repo"})
+check("grep: ANSI text", "cancion.txt" in out, out)
+code, out = cli("grep", {"pattern": "Engine", "path": S + "\\repo", "context": 0})
+check("grep: smart case (capital = exact case)", "engine.cpp" in out and "1: int Engine() {" in out, out)
+code, out = cli("grep", {"pattern": "ENGINE", "path": S + "\\repo", "case": "sensitive"})
+check("grep: exact case with no match falls back to ignoring case", "ignoring case" in out and "engine.cpp" in out, out)
+code, out = cli("grep", {"pattern": r"Render\w+", "path": S + "\\repo", "regex": True})
+check("grep: regex", "RenderFrame" in out, out)
+code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": "*.cpp"})
+check("grep: glob include", "engine.cpp" in out and "notes_utf16" not in out, out)
+code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "glob": ["!*.txt"]})
+check("grep: glob exclude", "notes_utf16" not in out and "engine.cpp" in out, out)
+code, out = cli("grep", {"pattern": "needle", "path": S + "\\repo\\many.txt", "per_file": 60, "limit": 10, "context": 0})
+check("grep: one file, a page", "60 matching lines" in out and "More: offset=10" in out, out)
+code, out = cli("grep", {"pattern": "needle", "path": S + "\\repo\\many.txt", "per_file": 60, "limit": 10, "offset": 50, "context": 0})
+check("grep: offset pages", "51: line 50 needle" in out and "More:" not in out, out)
+code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "summary": True})
+check("grep: summary", "Most matches" in out, out)
+code, out = cli("grep", {"pattern": "signs the lease", "path": S + "\\docs"})
+check("grep: a PDF, through Windows' text filter", "lease.pdf" in out and "text taken from the document" in out, out)
+code, out = cli("grep", {"pattern": "fee every month", "path": S + "\\docs"})
+docs_ok = "contract.docx" in out
+check("grep: a Word document" + ("" if docs_ok else " (no .docx text filter on this PC?)"), docs_ok or "couldn't be read" in out, out)
+code, out = cli("grep", {"pattern": "engine", "path": S + "\\docs"})
+check("grep: no text, names hinted", "No text matches" in out or "0 matching lines" in out, out)
+code, out = cli("grep", {"pattern": "x", "path": os.path.join(os.environ["USERPROFILE"], ".ssh")})
+check("grep: private places refused", code != 0 and ("private" in out or "Not found" in out), out)
+
+# ---- recent: the dates on disk below a folder
+code, out = cli("recent", {"path": S, "since": "1h"})
+check("recent: dates on disk", "engine.cpp" in out and "modified" in out, out)
+code, out = cli("recent", {"path": S, "since": "1h", "query": ".docx"})
+check("recent: filtered by name", "contract.docx" in out and "engine.cpp" not in out, out)
+
+# ---- MCP over stdio, through the background process
+subprocess.run([EXE, "--stop"], timeout=30)
+p = subprocess.Popen([EXE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def rpc(obj):
+    p.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
+    p.stdin.flush()
+    if "id" not in obj:
+        return None
+    return json.loads(p.stdout.readline().decode("utf-8"))
+r = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "seek-test", "version": "1"}}})
+check("mcp: initialize", r.get("result", {}).get("serverInfo", {}).get("name") == "seek" and "instructions" in r["result"], json.dumps(r))
+rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
+r = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+names = [t["name"] for t in r.get("result", {}).get("tools", [])]
+check("mcp: tools/list", names == ["find", "grep", "recent"], json.dumps(r)[:500])
+t0 = time.time()
+r = rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "engine.cpp", "path": S}}})
+text = r.get("result", {}).get("content", [{}])[0].get("text", "")
+check("mcp: tools/call find (starts the background process)", "engine.cpp" in text and r["result"]["isError"] is False, json.dumps(r)[:800])
+print("      (first call, with the start, %.2f s)" % (time.time() - t0))
+t0 = time.time()
+r = rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "notepad.exe", "limit": 3}}})
+text = r.get("result", {}).get("content", [{}])[0].get("text", "")
+check("mcp: find on all drives, warm", "notepad.exe" in text.lower(), text)
+print("      (warm, %.3f s)" % (time.time() - t0))
+r = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "grep", "arguments": {"pattern": "quick brown", "path": S + "\\repo"}}})
+check("mcp: tools/call grep", "engine.cpp" in r["result"]["content"][0]["text"], json.dumps(r)[:800])
+# a change while the background process watches: recent sees it
+time.sleep(1.0)
+put("repo/src/fresh_change.cpp", "// just written\n")
+time.sleep(1.5)
+r = rpc({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "recent", "arguments": {"since": "10m", "include_system": True, "query": "fresh_change"}}})
+check("mcp: recent sees a change live", "fresh_change.cpp" in r["result"]["content"][0]["text"], r["result"]["content"][0]["text"])
+r = rpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "fresh_change"}}})
+check("mcp: find knows a file created after the index", "fresh_change.cpp" in r["result"]["content"][0]["text"], r["result"]["content"][0]["text"])
+r = rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope", "arguments": {}}})
+check("mcp: unknown tool is an error", r["result"]["isError"] is True, json.dumps(r))
+r = rpc({"jsonrpc": "2.0", "id": 9, "method": "ping"})
+check("mcp: ping", r.get("result") == {}, json.dumps(r))
+r = rpc({"jsonrpc": "2.0", "id": 10, "method": "resources/list"})
+check("mcp: unknown method", r.get("error", {}).get("code") == -32601, json.dumps(r))
+p.stdin.close()
+p.wait(timeout=10)
+log = open(os.path.join(os.environ["LOCALAPPDATA"], "Jolt", "seek", "log.txt"), encoding="utf-8", errors="replace").read()
+check("log: the calls are written down", "seek-test  find" in log, log[-800:])
+subprocess.run([EXE, "--stop"], timeout=30)
+shutil.rmtree(ROOT, ignore_errors=True)
+print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
+sys.exit(1 if fails else 0)
