@@ -1,6 +1,6 @@
 // The drive index: every name on every fixed drive, the same format Jolt keeps. With Jolt installed, its index
 // (%LOCALAPPDATA%\Jolt\index-X.bin) is copied, not used in place: Jolt replaces that file when it reindexes, and a
-// file that another process has mapped can't be replaced. Without Jolt, the drives are walked once (minutes on a big
+// file that another process has mapped can't be replaced. Without Jolt, the drives are walked once (about a minute on a big
 // one) and that is saved. What changes afterwards comes from the drive watchers (activity.inl).
 
 struct IdxNode {
@@ -152,35 +152,81 @@ void WalkTree(const std::wstring& root, uint64_t deadline, const std::function<b
     }
 }
 
-// A whole drive, without Jolt (no special permissions: minutes for millions of files).
+std::atomic<uint32_t> g_indexing{0};  // drives being indexed with no index to use meanwhile: a bit each
+std::atomic<uint64_t> g_indexed[26];  // names found so far on each drive being walked
+
+// A whole drive, without Jolt: walked on several threads, with no special permissions. The order of the names doesn't
+// matter (Jolt's own follows the file table); each one only needs its folder listed before it.
 std::shared_ptr<Volume> BuildIndex(wchar_t letter) {
     auto v = std::make_shared<Volume>();
     v->letter = letter;
     const wchar_t root[3] = {letter, L':', 0};
     AddNode(*v, UINT32_MAX, root, 2, true);
-    std::vector<std::pair<uint32_t, std::wstring>> stack{{0, std::wstring(root) + L"\\"}};
-    WIN32_FIND_DATAW fd;
-    while (!stack.empty()) {
-        auto [idx, dir] = std::move(stack.back());
-        stack.pop_back();
-        HANDLE f = FindFirstFileExW((dir + (dir.back() == L'\\' ? L"*" : L"\\*")).c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
-                                    FIND_FIRST_EX_LARGE_FETCH);
-        if (f == INVALID_HANDLE_VALUE) continue;
-        do {
-            if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2]))) continue;
-            const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            const uint32_t me = static_cast<uint32_t>(v->nodes.size());
-            AddNode(*v, idx, fd.cFileName, wcslen(fd.cFileName), isDir);
-            if (isDir && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) stack.push_back({me, Join(dir, fd.cFileName)});
-        } while (FindNextFileW(f, &fd));
-        FindClose(f);
-    }
+    struct Dir {
+        uint32_t node;
+        std::wstring path;
+    };
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<Dir> todo{{0, std::wstring(root) + L"\\"}};
+    unsigned busy = 0;  // threads listing a folder; none, with nothing left, is the end
+    std::atomic<uint64_t>& found = g_indexed[letter - L'A'];
+    found = 1;
+    auto work = [&] {
+        struct Entry {
+            std::wstring name;
+            bool dir, walk;
+        };
+        std::vector<Entry> got;
+        WIN32_FIND_DATAW fd;
+        for (;;) {
+            Dir d;
+            {
+                std::unique_lock lk(m);
+                cv.wait(lk, [&] { return !todo.empty() || busy == 0; });
+                if (todo.empty()) break;
+                d = std::move(todo.back());
+                todo.pop_back();
+                ++busy;
+            }
+            got.clear();
+            const std::wstring pattern = (d.path.size() >= MAX_PATH - 2 ? L"\\\\?\\" + d.path : d.path) + (d.path.back() == L'\\' ? L"*" : L"\\*");
+            HANDLE f = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            if (f != INVALID_HANDLE_VALUE) {
+                do {
+                    if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2]))) continue;
+                    const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    got.push_back({fd.cFileName, isDir, isDir && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)});
+                } while (FindNextFileW(f, &fd));
+                FindClose(f);
+            }
+            bool wake;
+            {
+                std::lock_guard lk(m);
+                for (const Entry& e : got) {
+                    const uint32_t me = static_cast<uint32_t>(v->nodes.size());
+                    AddNode(*v, d.node, e.name.c_str(), e.name.size(), e.dir);
+                    if (e.walk) todo.push_back({me, Join(d.path, e.name)});
+                }
+                found += got.size();
+                --busy;
+                wake = !got.empty() || busy == 0;
+            }
+            if (wake) cv.notify_all();
+        }
+    };
+    std::vector<std::thread> threads;
+    for (unsigned i = 0, n = std::max(2u, std::min(8u, std::thread::hardware_concurrency())); i < n; ++i) threads.emplace_back(work);
+    for (auto& t : threads) t.join();
     v->Seal();
     v->stamp = NowFt();
     return v;
 }
 
 std::wstring JoltIndex(wchar_t c) { return LocalAppData() + L"\\Jolt\\index-" + std::wstring(1, c) + L".bin"; }
+
+// Does Jolt keep this drive's index (and Seek may use it)?
+bool JoltHas(wchar_t c) { return g_rules.jolt && MTimeOf(JoltIndex(c)) != 0; }
 
 // Its own copies carry the time they were taken in the name (index-C-<time>.bin), so a newer copy never has to
 // overwrite one that is still mapped. Returns the newest; the older ones are deleted when nothing maps them.
@@ -207,7 +253,7 @@ std::wstring CopyName(wchar_t c, int64_t stamp) { return DataDir() + L"\\index-"
 bool LoadVolume(wchar_t c, bool build) {
     int64_t ours = 0;
     std::wstring file = NewestCopy(c, ours);
-    const int64_t jolt = MTimeOf(JoltIndex(c));
+    const int64_t jolt = g_rules.jolt ? MTimeOf(JoltIndex(c)) : 0;
     if (jolt && jolt > ours) {
         const std::wstring f = CopyName(c, jolt), tmp = f + L".tmp";
         if (CopyFileW(JoltIndex(c).c_str(), tmp.c_str(), FALSE) && MoveFileExW(tmp.c_str(), f.c_str(), MOVEFILE_REPLACE_EXISTING)) {
@@ -230,9 +276,11 @@ bool LoadVolume(wchar_t c, bool build) {
             return true;
         }
     if (!build) return false;
+    g_indexing |= 1u << (c - L'A');
     auto v = BuildIndex(c);
     const int64_t stamp = v->stamp;
     Publish(v);
+    g_indexing &= ~(1u << (c - L'A'));
     const std::wstring f = CopyName(c, stamp);
     if (SaveIndex(*v, f))
         if (auto m = MapIndex(f, c)) {
@@ -240,6 +288,23 @@ bool LoadVolume(wchar_t c, bool build) {
             Publish(m);
         }
     return true;
+}
+
+// A drive Seek indexed itself is walked again once a day, in the background; the index it has answers meanwhile, and
+// the drive watchers cover what changes in between.
+void RefreshOwnIndex(wchar_t c) {
+    if (JoltHas(c)) return;
+    int64_t stamp = 0;
+    NewestCopy(c, stamp);
+    if (!stamp || NowFt() - stamp < kDay) return;
+    auto v = BuildIndex(c);
+    const std::wstring f = CopyName(c, v->stamp);
+    if (SaveIndex(*v, f))
+        if (auto m = MapIndex(f, c)) {
+            m->stamp = v->stamp;
+            Publish(m);
+            NewestCopy(c, stamp);
+        }
 }
 
 std::wstring NodePath(const Volume& v, uint32_t i) {

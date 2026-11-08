@@ -1,0 +1,388 @@
+{
+ "about": "Seek's benchmark on the author's PC. rows come from bench/bench.py, except those with a note saying when they were measured.",
+ "tasks": {
+  "find": "find fuzzy.inl, every drive",
+  "find_typo": "find fuzy.inl (typo), every drive",
+  "count": "every .blend: how many, where",
+  "recent": "what changed lately",
+  "grep_repo": "grep RecTake, the Jolt repository",
+  "grep_projects": "grep CreateFileW, every project",
+  "find_repo": "find fuzzy.inl, the Jolt repository",
+  "find_repo_typo": "find fuzy.inl, the Jolt repository",
+  "start": "start: first answer",
+  "start_fff_repo": "start: first answer, the Jolt repository",
+  "start_fff_projects": "start: first answer, every project"
+ },
+ "labels": {
+  "grep_repo": "Jolt's repository, 52 files",
+  "grep_projects": "every project, 10,700 files",
+  "repo_short": "the Jolt repository"
+ },
+ "facts": {
+  "machine": "a Ryzen 7 5800X with 8 cores, 32 GB of memory, two NVMe SSDs and a 1 TB hard disk, on Windows 11 Pro",
+  "names": "4.9 million",
+  "versions": "Seek 0.1.0, Everything 1.4.1.1032 with es 1.1.0.38, fff-mcp 0.11.0, ripgrep 15.2.0, fd 10.5.2, git 2.55.0 and Windows PowerShell 5.1",
+  "shell_date": "November 7, 2026",
+  "overhead": "0.1 ms",
+  "index_build": "18 s for the 2.1 million names on an NVMe SSD, 3.8 s for the 1.3 million on another, and 19.5 minutes for the 1.4 million on a hard disk read cold"
+ },
+ "index_build": "18 s for the 2.1 million names on an NVMe SSD, 3.8 s for the 1.3 million on another, and 19.5 minutes for the 1.4 million on a hard disk read cold",
+ "history_cols": [
+  "step",
+  "grep, every project",
+  "files read"
+ ],
+ "history": [
+  [
+   "The first comparison: it stopped at its 6 s budget",
+   "6.0 s",
+   "32,700"
+  ],
+  [
+   "Look for the pattern's bytes before decoding any text",
+   "0.96 s",
+   "32,700"
+  ],
+  [
+   "Check privacy by the entry's own name; look .gitignore names up",
+   "0.76 s",
+   "32,700"
+  ],
+  [
+   "List folders on 12 threads",
+   "0.73 s",
+   "32,700"
+  ],
+  [
+   "Read only the first 8 KB of a binary",
+   "0.35 s",
+   "32,700"
+  ],
+  [
+   "Follow .git\\info\\exclude and the global excludes, as git does",
+   "132 ms",
+   "10,700"
+  ],
+  [
+   "Keep the folder in memory, current through the drive watchers",
+   "11 ms",
+   "none"
+  ]
+ ],
+ "rows": [
+  {
+   "task": "start: first answer",
+   "tool": "Seek (daemon + index)",
+   "seconds": 0.295536,
+   "tokens": 128,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "Seek",
+   "seconds": 0.052372,
+   "tokens": 128,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "Everything",
+   "seconds": 0.092861,
+   "tokens": 85,
+   "found": true,
+   "count": 4
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "Windows Search",
+   "seconds": 0.233202,
+   "tokens": 0,
+   "found": false,
+   "count": 0
+  },
+  {
+   "task": "find fuzy.inl (typo), every drive",
+   "tool": "Seek",
+   "seconds": 0.057241,
+   "tokens": 117,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "find fuzy.inl (typo), every drive",
+   "tool": "Everything",
+   "seconds": 0.09629,
+   "tokens": 0,
+   "found": false,
+   "count": 0
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "Seek summary",
+   "seconds": 0.055158,
+   "tokens": 378,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "Everything, count only",
+   "seconds": 0.073735,
+   "tokens": 1,
+   "found": null,
+   "count": "8200"
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "Everything, the list",
+   "seconds": 0.100305,
+   "tokens": 196438,
+   "found": null,
+   "count": 8200
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "Windows Search",
+   "seconds": 0.249078,
+   "tokens": 129,
+   "found": null,
+   "count": 9
+  },
+  {
+   "task": "what changed lately",
+   "tool": "Seek recent",
+   "seconds": 0.009058,
+   "tokens": 384,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "what changed lately",
+   "tool": "Everything, newest 10",
+   "seconds": 0.105241,
+   "tokens": 235,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "Seek, first search",
+   "seconds": 0.003176,
+   "tokens": 197,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "Seek, again",
+   "seconds": 0.0004,
+   "tokens": 201,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "ripgrep",
+   "seconds": 0.029205,
+   "tokens": 85,
+   "found": null,
+   "count": 3
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "git grep",
+   "seconds": 0.034611,
+   "tokens": 64,
+   "found": null,
+   "count": 3
+  },
+  {
+   "task": "start: first answer, the Jolt repository",
+   "tool": "fff (scans the folder)",
+   "seconds": 0.109665,
+   "tokens": 0,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "fff",
+   "seconds": 0.000611,
+   "tokens": 253,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "memory",
+   "tool": "fff, the Jolt repository",
+   "mb": 114
+  },
+  {
+   "task": "find fuzzy.inl, the Jolt repository",
+   "tool": "fff",
+   "seconds": 0.000431,
+   "tokens": 3,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "find fuzzy.inl, the Jolt repository",
+   "tool": "Seek",
+   "seconds": 0.000325,
+   "tokens": 41,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "find fuzy.inl, the Jolt repository",
+   "tool": "fff",
+   "seconds": 0.000437,
+   "tokens": 10,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "find fuzy.inl, the Jolt repository",
+   "tool": "Seek",
+   "seconds": 0.000402,
+   "tokens": 38,
+   "found": true,
+   "count": null
+  },
+  {
+   "task": "grep CreateFileW, every project",
+   "tool": "Seek, first search",
+   "seconds": 0.131588,
+   "tokens": 1653,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep CreateFileW, every project",
+   "tool": "Seek, again",
+   "seconds": 0.010947,
+   "tokens": 1657,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep CreateFileW, every project",
+   "tool": "ripgrep",
+   "seconds": 0.487289,
+   "tokens": 1940,
+   "found": null,
+   "count": 48
+  },
+  {
+   "task": "start: first answer, every project",
+   "tool": "fff (scans the folder)",
+   "seconds": 0.246343,
+   "tokens": 0,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "grep CreateFileW, every project",
+   "tool": "fff",
+   "seconds": 0.035845,
+   "tokens": 1783,
+   "found": null,
+   "count": null
+  },
+  {
+   "task": "memory",
+   "tool": "fff, every project",
+   "mb": 201
+  },
+  {
+   "task": "memory",
+   "tool": "Seek",
+   "mb": 328
+  },
+  {
+   "task": "memory",
+   "tool": "Everything",
+   "mb": 493
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "fd",
+   "seconds": 4.73162,
+   "tokens": 84,
+   "found": true,
+   "count": 4
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "fd",
+   "seconds": 4.954066,
+   "tokens": 194388,
+   "found": null,
+   "count": 8200
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "ripgrep --files",
+   "seconds": 5.772544,
+   "tokens": 84,
+   "found": true,
+   "count": 4
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "dir /s",
+   "seconds": 84.65,
+   "tokens": 74,
+   "note": "the user profile only; 2026-11-07"
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "Get-ChildItem",
+   "seconds": 98.48,
+   "tokens": 11,
+   "note": "the user profile only; 2026-11-07"
+  },
+  {
+   "task": "find fuzzy.inl, every drive",
+   "tool": "fd, from disk",
+   "seconds": null,
+   "tokens": 0,
+   "note": "cut at 15 min, the first walk after the drives were read; 2026-11-08"
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "dir /s",
+   "seconds": 567.13,
+   "tokens": 104157,
+   "note": "C:\\Users, D: and E:; 2026-11-07"
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "Select-String",
+   "seconds": 6.68,
+   "tokens": 2348604,
+   "note": "reads build outputs too; 2026-11-07"
+  },
+  {
+   "task": "grep RecTake, the Jolt repository",
+   "tool": "findstr /s",
+   "seconds": 2.75,
+   "tokens": 2367575,
+   "note": "reads build outputs too; 2026-11-07"
+  },
+  {
+   "task": "every .blend: how many, where",
+   "tool": "ripgrep --files",
+   "seconds": 5.53,
+   "tokens": 194388,
+   "note": "measured on its own, the same day"
+  },
+  {
+   "task": "memory",
+   "tool": "Seek, no folders",
+   "mb": 32
+  }
+ ]
+}

@@ -170,14 +170,37 @@ const std::wstring& RoamingAppData() {
     return p;
 }
 
-// %LOCALAPPDATA%\Jolt\seek: its copy of the index, what it saw change, and the log.
+// Where Seek keeps its files: %LOCALAPPDATA%\Seek, with its copy of the index, what it saw change, and the log. The
+// variable SEEK_HOME names another folder, and that gives the instance a background process of its own (the tests
+// use it, so they never touch the one the user's agents talk to).
+const std::wstring& SeekHome() {
+    static const std::wstring h = [] {
+        const std::wstring v = Expand(L"%SEEK_HOME%");
+        return v.empty() || v.find(L'%') != std::wstring::npos ? std::wstring() : Normalize(v);
+    }();
+    return h;
+}
+
 const std::wstring& DataDir() {
     static const std::wstring p = [] {
-        const std::wstring d = LocalAppData() + L"\\Jolt\\seek";
+        const std::wstring d = SeekHome().empty() ? LocalAppData() + L"\\Seek" : SeekHome();
         SHCreateDirectoryExW(nullptr, d.c_str(), nullptr);
         return d;
     }();
     return p;
+}
+
+// The settings: %APPDATA%\Seek\seek.txt, or seek.txt in SEEK_HOME.
+std::wstring SettingsFile() { return SeekHome().empty() ? RoamingAppData() + L"\\Seek\\seek.txt" : SeekHome() + L"\\seek.txt"; }
+
+// Names the background process by: empty for the usual one, a hash of SEEK_HOME for another.
+std::wstring InstanceTag() {
+    if (SeekHome().empty()) return L"";
+    uint32_t h = 2166136261u;
+    for (const wchar_t c : Key(SeekHome())) h = (h ^ c) * 16777619u;
+    wchar_t b[16];
+    swprintf_s(b, L"-%08x", h);
+    return b;
 }
 
 bool FileInfo(const std::wstring& path, WIN32_FILE_ATTRIBUTE_DATA& d) {
@@ -197,6 +220,7 @@ struct Rules {
     std::vector<std::wstring> noisePrefixes, noiseNames, noiseExts;  // system churn, left out of "recent" unless asked
     std::wstring profileDot;  // "c:\users\me\.": the dot folders there are programs' data (.cargo, .vscode, .t3…)
     bool log = true;
+    bool jolt = true;        // use Jolt's index and what Jolt knows about the folders used, when Jolt is installed
     uint64_t cacheMb = 512;  // folders kept in memory for grep, at most
 } g_rules;
 
@@ -237,8 +261,9 @@ void LoadRulesNow() {
                    L".ldb", L".tlog", L".obj", L".o", L".pdb", L".ilk", L".idb", L".pch", L".ipch", L".rlib", L".rmeta", L".d",
                    L".lastbuildstate"};
     r.profileDot = Key(Normalize(Expand(L"%USERPROFILE%"))) + L"\\.";
-    // %APPDATA%\Jolt\seek.txt: "exclude = C:\folder", "exclude = *.ext", "exclude = name", "log = no"
-    std::ifstream in(RoamingAppData() + L"\\Jolt\\seek.txt", std::ios::binary);
+    // seek.txt: "exclude = C:\folder", "exclude = *.ext", "exclude = name", "log = no", "jolt = no", "cache = 256"
+    r.jolt = Expand(L"%SEEK_NO_JOLT%") != L"1";
+    std::ifstream in(SettingsFile(), std::ios::binary);
     std::string line;
     while (std::getline(in, line)) {
         const std::wstring l = Trim(Wide(line));
@@ -247,6 +272,7 @@ void LoadRulesNow() {
         if (eq == std::wstring::npos) continue;
         const std::wstring k = Lower(Trim(l.substr(0, eq))), v = Trim(l.substr(eq + 1));
         if (k == L"log") r.log = Lower(v) != L"no";
+        if (k == L"jolt") r.jolt = Lower(v) != L"no";
         if (k == L"cache") r.cacheMb = static_cast<uint64_t>(_wtoi64(v.c_str()));
         if (k != L"exclude" || v.empty()) continue;
         if (v.rfind(L"*.", 0) == 0) r.exts.push_back(Lower(v.substr(1)));

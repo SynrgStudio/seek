@@ -1,11 +1,14 @@
-"""Seek's tests: the tools on test files in %TEMP%\\seek-test, and the MCP protocol over stdio through the shared
-background process. Only reads outside that folder. Run: python -I seek\\test.py"""
+"""Seek's tests: the tools on test files in %TEMP%\\seek-test, and the MCP protocol over stdio through a background
+process of their own (SEEK_HOME points it at the test folder, so the one the user's agents talk to is left alone).
+Outside that folder they only read. Run: python -I tests\\test.py"""
 import io, json, os, shutil, subprocess, sys, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "build", "seek.exe")
+EXE = os.path.join(os.path.dirname(HERE), "build", "seek.exe")
 TMP = os.environ["TEMP"]
 ROOT = os.path.join(TMP, "seek-test")
+os.environ["SEEK_HOME"] = os.path.join(TMP, "seek-test-home")  # every seek.exe started from here: its files and its daemon
+CI = bool(os.environ.get("CI"))  # GitHub's machines: no Jolt, and maybe no PDF text filter
 fails = 0
 
 
@@ -61,8 +64,11 @@ def pdf(text):
     return bytes(out)
 
 
+subprocess.run([EXE, "--stop"], timeout=60)  # the test daemon of a run that stopped halfway
 shutil.rmtree(ROOT, ignore_errors=True)
+shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 os.makedirs(os.path.join(ROOT, "repo", ".git"))
+os.makedirs(os.environ["SEEK_HOME"])
 put("docs/lease.pdf", pdf("The brown fox signs the lease for the burrow"))
 put("repo/.gitignore", "build/\n*.log\n!keep.log\n")
 put("repo/src/engine.cpp", "int Engine() {\n    // the quick brown fox\n    return 42;\n}\nvoid RenderFrame() {}\n")
@@ -105,11 +111,6 @@ code, out = cli("find", {"query": "*.cpp", "path": S, "summary": True})
 check("find: summary counts", "By area" in out and "By extension" in out, out)
 code, out = cli("find", {"query": "zzzqqqxxx", "path": S})
 check("find: nothing says so", out.startswith("Nothing named like"), out)
-# ---- find on all drives, from the index
-t0 = time.time()
-code, out = cli("find", {"query": "notepad.exe", "limit": 5})
-check("find: everywhere, a program first", "notepad.exe" in out.lower() and "program" in out, out)
-print("      (find on all drives, cold, %.2f s)" % (time.time() - t0))
 
 # ---- grep
 code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo"})
@@ -138,7 +139,8 @@ check("grep: offset pages", "51: line 50 needle" in out and "More:" not in out, 
 code, out = cli("grep", {"pattern": "fox", "path": S + "\\repo", "summary": True})
 check("grep: summary", "Most matches" in out, out)
 code, out = cli("grep", {"pattern": "signs the lease", "path": S + "\\docs"})
-check("grep: a PDF, through Windows' text filter", "lease.pdf" in out and "text taken from the document" in out, out)
+pdf_ok = "lease.pdf" in out and "text taken from the document" in out
+check("grep: a PDF, through Windows' text filter" + ("" if pdf_ok else " (no PDF text filter on this machine)"), pdf_ok or (CI and "couldn't be read" in out), out)
 code, out = cli("grep", {"pattern": "fee every month", "path": S + "\\docs"})
 docs_ok = "contract.docx" in out
 check("grep: a Word document" + ("" if docs_ok else " (no .docx text filter on this PC?)"), docs_ok or "couldn't be read" in out, out)
@@ -163,13 +165,12 @@ code, out = cli("grep", {"pattern": "x", "path": os.path.join(os.environ["USERPR
 check("grep: private places refused", code != 0 and ("private" in out or "Not found" in out), out)
 
 # ---- recent: the dates on disk below a folder
-code, out = cli("recent", {"path": S, "since": "1h"})
+code, out = cli("recent", {"path": S, "since": "1h", "limit": 100})
 check("recent: dates on disk", "engine.cpp" in out and "modified" in out, out)
 code, out = cli("recent", {"path": S, "since": "1h", "query": ".docx"})
 check("recent: filtered by name", "contract.docx" in out and "engine.cpp" not in out, out)
 
 # ---- MCP over stdio, through the background process
-subprocess.run([EXE, "--stop"], timeout=30)
 p = subprocess.Popen([EXE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 def rpc(obj):
     p.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
@@ -189,9 +190,19 @@ text = r.get("result", {}).get("content", [{}])[0].get("text", "")
 check("mcp: tools/call find (starts the background process)", "engine.cpp" in text and r["result"]["isError"] is False, json.dumps(r)[:800])
 print("      (first call, with the start, %.2f s)" % (time.time() - t0))
 t0 = time.time()
+# on all drives: with Jolt, its index is there at once; without it, the daemon walks the drives first
+end = time.time() + 600
+for i in range(100000):
+    r = rpc({"jsonrpc": "2.0", "id": 1000 + i, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "notepad.exe", "limit": 3}}})
+    text = r.get("result", {}).get("content", [{}])[0].get("text", "")
+    if "Still indexing" not in text or time.time() > end:
+        break
+    time.sleep(2)
+print("      (the index of every drive ready after %.1f s)" % (time.time() - t0))
+check("mcp: find on all drives, a program first", "notepad.exe" in text.lower() and "program" in text, text)
+t0 = time.time()
 r = rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "notepad.exe", "limit": 3}}})
-text = r.get("result", {}).get("content", [{}])[0].get("text", "")
-check("mcp: find on all drives, warm", "notepad.exe" in text.lower(), text)
+check("mcp: find on all drives, warm", "notepad.exe" in r["result"]["content"][0]["text"].lower(), json.dumps(r)[:800])
 print("      (warm, %.3f s)" % (time.time() - t0))
 r = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "grep", "arguments": {"pattern": "quick brown", "path": S + "\\repo"}}})
 check("mcp: tools/call grep", "engine.cpp" in r["result"]["content"][0]["text"], json.dumps(r)[:800])
@@ -204,14 +215,27 @@ check("mcp: recent sees a change live", "fresh_change.cpp" in r["result"]["conte
 r = rpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "fresh_change"}}})
 check("mcp: find knows a file created after the index", "fresh_change.cpp" in r["result"]["content"][0]["text"], r["result"]["content"][0]["text"])
 r = rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope", "arguments": {}}})
-check("mcp: unknown tool is an error", r["result"]["isError"] is True, json.dumps(r))
+check("mcp: unknown tool is a protocol error", r.get("error", {}).get("code") == -32602, json.dumps(r))
 r = rpc({"jsonrpc": "2.0", "id": 9, "method": "ping"})
 check("mcp: ping", r.get("result") == {}, json.dumps(r))
 r = rpc({"jsonrpc": "2.0", "id": 10, "method": "resources/list"})
 check("mcp: unknown method", r.get("error", {}).get("code") == -32601, json.dumps(r))
+r = rpc({"jsonrpc": "2.0", "id": 11, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "seek-test", "version": "1"}}})
+check("mcp: an older protocol version is kept", r.get("result", {}).get("protocolVersion") == "2024-11-05", json.dumps(r))
+r = rpc({"jsonrpc": "2.0", "id": 12, "method": "initialize", "params": {"protocolVersion": "1.0", "capabilities": {}, "clientInfo": {"name": "seek-test", "version": "1"}}})
+check("mcp: an unknown protocol version gets Seek's latest", r.get("result", {}).get("protocolVersion", "").startswith("20"), json.dumps(r))
+check("mcp: server info", r.get("result", {}).get("serverInfo", {}).get("websiteUrl") == "https://seek.synrgs.tech", json.dumps(r))
+p.stdin.write((json.dumps([{"jsonrpc": "2.0", "id": 13, "method": "ping"}, {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                           {"jsonrpc": "2.0", "id": 14, "method": "tools/list"}]) + "\n").encode("utf-8"))
+p.stdin.flush()
+r = json.loads(p.stdout.readline().decode("utf-8"))
+check("mcp: a batch gets one reply per request", isinstance(r, list) and [x.get("id") for x in r] == [13, 14], json.dumps(r)[:300])
+r = rpc({"jsonrpc": "2.0", "id": 15, "method": "tools/list"})
+annotations = [t.get("annotations", {}) for t in r["result"]["tools"]]
+check("mcp: every tool only reads", all(a.get("readOnlyHint") and a.get("destructiveHint") is False for a in annotations), json.dumps(annotations))
 p.stdin.close()
 p.wait(timeout=10)
-log = open(os.path.join(os.environ["LOCALAPPDATA"], "Jolt", "seek", "log.txt"), encoding="utf-8", errors="replace").read()
+log = open(os.path.join(os.environ["SEEK_HOME"], "log.txt"), encoding="utf-8", errors="replace").read()
 check("log: the calls are written down", "seek-test  find" in log, log[-800:])
 
 # ---- folders kept in memory by the background process, and kept current by its watchers
@@ -261,7 +285,8 @@ out = wait("alpha", lambda o: "new.txt" not in o)
 check("cache: a changed .gitignore applies", "new.txt" not in out and "moved\\f.txt" in out, out)
 out = cli("grep", {"pattern": "alpha", "path": L, "ignored": True, "limit": 50}, via="--call")[1]
 check("cache: ignored still walks the folder", "c2.txt" in out and "kept in memory" not in out, out)
-subprocess.run([EXE, "--stop"], timeout=30)
+subprocess.run([EXE, "--stop"], timeout=60)
 shutil.rmtree(ROOT, ignore_errors=True)
+shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
 sys.exit(1 if fails else 0)

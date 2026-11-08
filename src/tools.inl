@@ -57,6 +57,16 @@ bool WaitIndex(int ms) {
     return g_indexReady;
 }
 
+// While a drive is indexed for the first time (without Jolt), its names are missing from searches on all drives.
+std::wstring IndexingNote() {
+    const uint32_t mask = g_indexing;
+    std::wstring s;
+    for (int i = 0; i < 26; ++i)
+        if (mask & (1u << i)) s += std::wstring(s.empty() ? L"" : L", ") + static_cast<wchar_t>(L'A' + i) + L": (" + Thousands(g_indexed[i]) + L" names so far)";
+    if (s.empty()) return L"";
+    return L"(Still indexing " + s + L" for the first time: until that ends, names there are missing. A path there is walked right away.)\n";
+}
+
 std::wstring IndexAge() {
     int64_t oldest = 0;
     for (const auto& v : Volumes())
@@ -103,7 +113,9 @@ ToolOut ToolFind(const Json& a) {
     if (q.Empty() && q.kind == 0) return {L"That query only leaves things out: add a name, an extension or a wildcard.", true};
     if (!scope.empty())
         if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
-    if (!WaitIndex(30000)) return {L"The drive index is still loading. Try again in a few seconds.", true};
+    // a folder doesn't need the index: one on a drive without it yet is walked
+    if (!WaitIndex(scope.empty() ? 30000 : 3000) && scope.empty()) return {L"The drive index is still loading. Try again in a few seconds.", true};
+    const std::wstring building = scope.empty() ? IndexingNote() : L"";
     LoadUsage();
     std::vector<AddedItem> added;  // what was created since the index was taken: below the folder, when there is one
     {
@@ -211,7 +223,7 @@ ToolOut ToolFind(const Json& a) {
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
     if (found.empty())
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
-                L"; what was created since is watched.) For text inside files, use grep."};
+                L"; what was created since is watched.) For text inside files, use grep.\n" + building};
 
     if (summary) {
         std::unordered_map<std::wstring, int> byFolder, byArea, byExt, byDrive;
@@ -262,7 +274,7 @@ ToolOut ToolFind(const Json& a) {
             out += L"\nBy drive:";
             for (const auto& [c, k] : top(byDrive, 26)) out += L"  " + k + L" " + Thousands(c);
         }
-        return {out};
+        return {out + L"\n" + building};
     }
 
     // what the user is doing: things changed lately, folders used in Jolt, and the neighbourhood of `near`
@@ -329,7 +341,7 @@ ToolOut ToolFind(const Json& a) {
     std::wstring tail;
     if (static_cast<uint64_t>(shown) < real.total && !nearOnly)
         tail = L"(" + Thousands(real.total - shown) + L" more: narrow the query, add path, use summary for counts, or raise limit up to 200.)\n";
-    return {head + list + tail};
+    return {head + list + tail + building};
 }
 
 // ---- grep
@@ -497,7 +509,7 @@ ToolOut ToolRecent(const Json& a) {
         const uint64_t deadline = GetTickCount64() + 3000;
         WalkTree(scope, deadline, [&](const std::wstring& p, const WIN32_FIND_DATAW& fd) {
             const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            if (dir) return !JunkDirs().count(Lower(fd.cFileName)) && !Private(Key(p));
+            if (dir) return !JunkDirs().count(Lower(fd.cFileName)) && !Private(Key(p)) && Key(p) != Key(DataDir());  // not Seek's own files
             add(p, Ft(fd.ftLastWriteTime), L"modified", false);
             return false;
         });

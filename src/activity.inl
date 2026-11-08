@@ -185,6 +185,7 @@ std::vector<std::wstring> g_joltRecent;
 int64_t g_useStamp = -1, g_recentStamp = -1;
 
 void LoadUsage() {
+    if (!g_rules.jolt) return;
     const std::wstring uf = RoamingAppData() + L"\\Jolt\\usage.txt", rf = RoamingAppData() + L"\\Jolt\\recents.txt";
     const int64_t ut = MTimeOf(uf), rt = MTimeOf(rf);
     std::lock_guard lk(g_useM);

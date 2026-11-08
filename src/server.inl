@@ -20,7 +20,7 @@ const char* kToolsJson = R"JSON([
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
   "summary":{"type":"boolean","default":false,"description":"How many and where (counts by folder, extension and drive) instead of a list."}},
   "required":["query"]},
- "annotations":{"readOnlyHint":true,"openWorldHint":false}},
+ "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
 {"name":"grep","title":"Search text inside files",
  "description":"Search the text inside the files of a folder (or one file): code and text in any encoding, and PDF/Office documents when Windows has a text filter for them. Follows .gitignore (and .git/info/exclude, the user's global excludes and .ignore) and skips dependency and cache folders and binaries, unless ignored is true; a path inside an ignored folder is searched as asked. Literal by default and case-insensitive unless the pattern has capitals; regex for a pattern. Each match shows its line with line numbers; context adds lines around.",
  "inputSchema":{"type":"object","properties":{
@@ -39,7 +39,7 @@ const char* kToolsJson = R"JSON([
   "ignored":{"type":"boolean","default":false,"description":"Also search what .gitignore leaves out and dependency and cache folders (node_modules, build outputs)."},
   "time_budget_ms":{"type":"integer","minimum":500,"maximum":60000,"default":6000}},
   "required":["pattern","path"]},
- "annotations":{"readOnlyHint":true,"openWorldHint":false}},
+ "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
 {"name":"recent","title":"What the user worked on lately",
  "description":"Files the user created or changed lately and folders they opened in Jolt, newest first: what they are working on. Machine-wide from what Seek saw change while running (kept between runs); with path, also the dates on disk below that folder. System places are left out unless include_system.",
  "inputSchema":{"type":"object","properties":{
@@ -48,15 +48,17 @@ const char* kToolsJson = R"JSON([
   "since":{"type":"string","default":"7d","description":"How far back: 30m, 2h, 3d, 2w."},
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
   "include_system":{"type":"boolean","default":false}}},
- "annotations":{"readOnlyHint":true,"openWorldHint":false}}
+ "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}
 ])JSON";
 
 std::wstring PipeName() {
     wchar_t user[256] = L"";
     DWORD n = 256;
     GetUserNameW(user, &n);
-    return std::wstring(L"\\\\.\\pipe\\jolt-seek-") + user;
+    return std::wstring(L"\\\\.\\pipe\\seek-") + user + InstanceTag();
 }
+
+std::wstring MutexName() { return L"Local\\SeekDaemon" + InstanceTag(); }
 
 bool WriteFrame(HANDLE h, const std::string& s) {
     const uint32_t n = static_cast<uint32_t>(s.size());
@@ -142,11 +144,30 @@ void Serve(HANDLE pipe) {
     CloseHandle(pipe);
 }
 
+// Before Seek had a repository of its own, its files lived in %LOCALAPPDATA%\Jolt\seek: what it saw change and the
+// log move over, the copies of the index go.
+void MoveOldData() {
+    if (!SeekHome().empty()) return;
+    const std::wstring old = LocalAppData() + L"\\Jolt\\seek";
+    if (GetFileAttributesW(old.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    for (const wchar_t* f : {L"\\activity.txt", L"\\log.txt"}) MoveFileExW((old + f).c_str(), (DataDir() + f).c_str(), 0);
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((old + L"\\*").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE) {
+        do
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) DeleteFileW((old + L"\\" + fd.cFileName).c_str());
+        while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    RemoveDirectoryW(old.c_str());  // when something still holds a copy, the next start finishes it
+}
+
 int DaemonMain() {
-    HANDLE mx = CreateMutexW(nullptr, TRUE, L"Local\\JoltSeekDaemon");  // held until it exits: --stop waits on it
+    HANDLE mx = CreateMutexW(nullptr, TRUE, MutexName().c_str());  // held until it exits: --stop waits on it
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;  // one is running
     (void)mx;
     LoadRules();  // before the watchers: they must already know what is private
+    MoveOldData();
     SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     // only this user, and SYSTEM, can connect
     std::wstring sddl = L"D:P(A;;GA;;;SY)";
@@ -167,13 +188,15 @@ int DaemonMain() {
     ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sa.lpSecurityDescriptor, nullptr);
     std::thread([] { LoadEverything(true); }).detach();
     ActStartWatching();
-    std::thread([] {  // saves what it saw, and picks up a newer index from Jolt
+    std::thread([] {  // saves what it saw, picks up a newer index from Jolt, and walks its own indexes again daily
         for (int tick = 1;; ++tick) {
             Sleep(60 * 1000);
             CacheExpire();
             if (tick % 5 == 0) ActSave();
             if (tick % 10 == 0)
                 for (wchar_t c : FixedDrives()) LoadVolume(c, false);
+            if (tick % 60 == 2)
+                for (wchar_t c : FixedDrives()) RefreshOwnIndex(c);
         }
     }).detach();
     const std::wstring name = PipeName();
@@ -224,7 +247,7 @@ HANDLE ConnectDaemon(int waitMs) {
 
 // Until the daemon's mutex is released (it held it until it exited).
 void WaitDaemonGone() {
-    if (HANDLE mx = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\JoltSeekDaemon")) {
+    if (HANDLE mx = OpenMutexW(SYNCHRONIZE, FALSE, MutexName().c_str())) {
         const DWORD r = WaitForSingleObject(mx, 5000);
         if (r == WAIT_OBJECT_0 || r == WAIT_ABANDONED) ReleaseMutex(mx);
         CloseHandle(mx);
@@ -293,6 +316,65 @@ std::string IdText(const Json* id) {
     return s;
 }
 
+// The protocol versions Seek speaks: every one since the first, as nothing tools rely on changed between them. A
+// client asking for one of those, or a later one, gets it back; anything else gets the latest Seek knows.
+constexpr const char* kFirstProtocol = "2024-11-05";
+constexpr const char* kLatestProtocol = "2025-11-25";
+
+bool IsDate(const std::string& s) {
+    if (s.size() != 10 || s[4] != '-' || s[7] != '-') return false;
+    for (size_t i : {0, 1, 2, 3, 5, 6, 8, 9})
+        if (s[i] < '0' || s[i] > '9') return false;
+    return true;
+}
+
+// One JSON-RPC message from the client: the reply to send, or nothing for a notification.
+std::string Handle(const Json& msg, std::wstring& client) {
+    const Json* id = msg.at("id");
+    const Json* method = msg.at("method");
+    const Json* params = msg.at("params");
+    if (!method || method->kind != Json::Str) return "";  // a reply to us: nothing is asked of the client
+    const std::string& m = method->s;
+    if (!id || id->kind == Json::Null) return "";  // notifications (initialized, cancelled): nothing to answer
+    const std::string head = "{\"jsonrpc\":\"2.0\",\"id\":" + IdText(id) + ",";
+    auto error = [&](int code, const std::string& text) {
+        return head + "\"error\":{\"code\":" + std::to_string(code) + ",\"message\":" + JsonQuote(text) + "}}";
+    };
+    if (m == "initialize") {
+        std::string version = kLatestProtocol;
+        if (params)
+            if (const Json* v = params->at("protocolVersion"); v && v->kind == Json::Str && IsDate(v->s) && v->s >= kFirstProtocol) version = v->s;
+        if (params)
+            if (const Json* ci = params->at("clientInfo"))
+                if (const Json* n = ci->at("name"); n && n->kind == Json::Str) client = Wide(n->s);
+        return head + "\"result\":{\"protocolVersion\":" + JsonQuote(version) +
+               ",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"seek\",\"title\":\"Seek\",\"version\":\"" SEEK_VERSION
+               "\",\"websiteUrl\":\"https://seek.synrgs.tech\"},\"instructions\":" + JsonQuote(kInstructions) + "}}";
+    }
+    if (m == "tools/list") {
+        std::string tools(kToolsJson);
+        std::replace(tools.begin(), tools.end(), '\n', ' ');  // one message per line
+        return head + "\"result\":{\"tools\":" + tools + "}}";
+    }
+    if (m == "tools/call") {
+        const Json* name = params ? params->at("name") : nullptr;
+        const Json* args = params ? params->at("arguments") : nullptr;
+        if (!name || name->kind != Json::Str || (name->s != "find" && name->s != "grep" && name->s != "recent"))
+            return error(-32602, "Unknown tool: " + (name && name->kind == Json::Str ? name->s : std::string("(none)")) + ". The tools are find, grep and recent.");
+        if (args && args->kind != Json::Obj && args->kind != Json::Null) return error(-32602, "The arguments must be an object.");
+        static const Json empty = [] {
+            Json e;
+            e.kind = Json::Obj;
+            return e;
+        }();
+        const ToolOut out = CallTool(name->s, args && args->kind == Json::Obj ? *args : empty, client);
+        return head + "\"result\":{\"content\":[{\"type\":\"text\",\"text\":" + JsonQuote(Utf8(out.text)) + "}],\"isError\":" +
+               (out.error ? "true" : "false") + "}}";
+    }
+    if (m == "ping") return head + "\"result\":{}}";
+    return error(-32601, "Method not found");
+}
+
 int McpMain() {
     std::wstring client;
     std::string buf, line;
@@ -313,43 +395,14 @@ int McpMain() {
                 Send(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}})");
                 continue;
             }
-            const Json* id = msg.at("id");
-            const Json* method = msg.at("method");
-            const Json* params = msg.at("params");
-            if (!method || method->kind != Json::Str) continue;  // a reply to us: nothing is asked of the client
-            const std::string& m = method->s;
-            if (!id || id->kind == Json::Null) continue;  // notifications (initialized, cancelled): nothing to answer
-            const std::string head = "{\"jsonrpc\":\"2.0\",\"id\":" + IdText(id) + ",";
-            if (m == "initialize") {
-                std::string version = "2025-06-18";
-                if (params)
-                    if (const Json* v = params->at("protocolVersion"); v && v->kind == Json::Str) version = v->s;
-                if (params)
-                    if (const Json* ci = params->at("clientInfo"))
-                        if (const Json* n = ci->at("name")) client = Wide(n->s);
-                Send(head + "\"result\":{\"protocolVersion\":" + JsonQuote(version) +
-                     ",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"seek\",\"title\":\"Seek\",\"version\":\"" SEEK_VERSION
-                     "\"},\"instructions\":" + JsonQuote(kInstructions) + "}}");
-            } else if (m == "tools/list") {
-                std::string tools(kToolsJson);
-                std::replace(tools.begin(), tools.end(), '\n', ' ');  // one message per line
-                Send(head + "\"result\":{\"tools\":" + tools + "}}");
-            } else if (m == "tools/call") {
-                const Json* name = params ? params->at("name") : nullptr;
-                static const Json empty = [] {
-                    Json e;
-                    e.kind = Json::Obj;
-                    return e;
-                }();
-                const Json* args = params ? params->at("arguments") : nullptr;
-                const ToolOut out = CallTool(name ? name->s : "", args && args->kind == Json::Obj ? *args : empty, client);
-                Send(head + "\"result\":{\"content\":[{\"type\":\"text\",\"text\":" + JsonQuote(Utf8(out.text)) + "}],\"isError\":" +
-                     (out.error ? "true" : "false") + "}}");
-            } else if (m == "ping") {
-                Send(head + "\"result\":{}}");
-            } else {
-                Send(head + "\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}");
+            if (msg.kind == Json::Arr) {  // a batch, from clients of the 2025-03-26 protocol
+                std::string replies;
+                for (const Json& one : msg.a)
+                    if (std::string r = Handle(one, client); !r.empty()) replies += (replies.empty() ? "" : ",") + r;
+                if (!replies.empty()) Send("[" + replies + "]");
+                continue;
             }
+            if (std::string r = Handle(msg, client); !r.empty()) Send(r);
         }
     }
     return 0;
@@ -384,6 +437,30 @@ int CliMain(int argc, wchar_t** argv, bool viaDaemon) {
     Print(out.text);
     if (!out.text.empty() && out.text.back() != L'\n') Print(L"\n");
     return out.error ? 1 : 0;
+}
+
+// seek --reindex [C D ...]: walks the drives again now, where Seek keeps its own index (Jolt keeps its own current).
+int ReindexMain(int argc, wchar_t** argv) {
+    LoadRules();
+    std::vector<wchar_t> drives;
+    for (int i = 2; i < argc; ++i)
+        if (iswalpha(argv[i][0])) drives.push_back(static_cast<wchar_t>(towupper(argv[i][0])));
+    if (drives.empty()) drives = FixedDrives();
+    for (const wchar_t c : drives) {
+        if (JoltHas(c)) {
+            Print(std::wstring(1, c) + L": uses Jolt's index, which Jolt keeps current.\n");
+            continue;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        auto v = BuildIndex(c);
+        const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const bool saved = SaveIndex(*v, CopyName(c, v->stamp));
+        wchar_t took[32];
+        swprintf_s(took, L"%.1f s", s);
+        Print(std::wstring(1, c) + L": " + Thousands(v->count) + L" names in " + took + (saved ? L"" : L", but it couldn't be saved") + L".\n");
+    }
+    Print(L"A running background process picks the new index up within 10 minutes.\n");
+    return 0;
 }
 
 int StopMain() {

@@ -1,6 +1,10 @@
 """Seek against the other ways an agent can search a Windows PC, on this PC.
 
-    python -I seek\\bench.py [--ext blend] [--walkers]
+    python -I bench\\bench.py [--repo FOLDER --word TEXT] [--projects FOLDER --projects-word TEXT]
+                              [--ext blend] [--walkers] [--json results.json]
+
+A repository and a folder of many projects are searched for text; by default this repository (for WalkFolder) and the
+folder it is in (for CreateFileW). The file found by name on every drive is src\\fuzzy.inl, which this repository has.
 
 Compared, when they are found (on PATH, or in the variables below):
     Everything   es.exe, with Everything running         SEEK_BENCH_ES
@@ -18,9 +22,8 @@ import argparse, json, os, queue, shutil, statistics, string, subprocess, sys, t
 
 NO_WINDOW = 0x08000000
 HERE = os.path.dirname(os.path.abspath(__file__))
-SEEK = os.path.join(HERE, "build", "seek.exe")
-REPO = os.path.dirname(HERE)  # Jolt's repository
-PROJECTS = os.path.dirname(REPO)  # the folder it is in: usually every project of the user
+ROOT = os.path.dirname(HERE)  # this repository
+SEEK = os.path.join(ROOT, "build", "seek.exe")
 STATE = os.path.join(tempfile.gettempdir(), "seek-bench")
 
 
@@ -121,6 +124,11 @@ def winsearch(where):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", default=ROOT, help="a repository to search (default: this one)")
+    ap.add_argument("--word", default="WalkFolder", help="the text to look for in it")
+    ap.add_argument("--repo-label", help="what to call it in the results (default: its folder's name)")
+    ap.add_argument("--projects", default=os.path.dirname(ROOT), help="a folder of many projects (default: the one this repository is in)")
+    ap.add_argument("--projects-word", default="CreateFileW", help="the text to look for in it")
     ap.add_argument("--ext", default="pdf", help="an extension to count on every drive (default pdf)")
     ap.add_argument("--walkers", action="store_true", help="also time fd and ripgrep walking every drive (minutes)")
     ap.add_argument("--json", help="also write the results here")
@@ -133,6 +141,8 @@ def main():
     drives = [f"{c}:\\" for c in string.ascii_uppercase
               if os.path.exists(f"{c}:\\") and __import__("ctypes").windll.kernel32.GetDriveTypeW(f"{c}:\\") == 3]
     target = os.path.join("src", "fuzzy.inl")
+    REPO, PROJECTS = a.repo, a.projects
+    repo_name = a.repo_label or os.path.basename(REPO.rstrip("\\"))
     rows = []
 
     def rec(task, tool, t, out, found=None, count=None):
@@ -184,7 +194,7 @@ def main():
 
     fffs = []
 
-    def fff(root, tag):
+    def fff(root, tag, word):
         st = os.path.join(STATE, "fff-" + tag)
         os.makedirs(st, exist_ok=True)
         t0 = time.perf_counter()
@@ -193,13 +203,13 @@ def main():
         while "fuzzy.inl" not in m.call("find_files", {"query": "fuzzy.inl"})[1] and time.perf_counter() - t0 < 600:
             time.sleep(0.02)
         ready = time.perf_counter() - t0
-        while "RecTake" not in m.call("grep", {"query": "RecTake"})[1] and time.perf_counter() - t0 < 600:
+        while word not in m.call("grep", {"query": word})[1] and time.perf_counter() - t0 < 600:
             time.sleep(0.05)
         time.sleep(3)  # its content index, built after the scan
         fffs.append(m)
         return m, ready
 
-    for root, word, label in ((REPO, "RecTake", "Jolt's repository"), (PROJECTS, "CreateFileW", "every project")):
+    for root, word, label in ((REPO, a.word, f"the {repo_name} repository"), (PROJECTS, a.projects_word, "every project")):
         T = f"grep {word}, {label}"
         if rg:
             run([rg, "-n", word, root])  # the files in the system's cache, for every tool
@@ -214,7 +224,7 @@ def main():
             t, out = med(lambda: run(["git", "-C", REPO, "grep", "-n", word]))
             rec(T, "git grep", t, out, count=lines(out))
         if fff_exe:
-            m, ready = fff(root, "repo" if root == REPO else "projects")
+            m, ready = fff(root, "repo" if root == REPO else "projects", word)
             rec(f"start: first answer, {label}", "fff (scans the folder)", ready, "")
             t, out = med(lambda: m.call("grep", {"query": word}))
             rec(T, "fff", t, out)
@@ -222,9 +232,9 @@ def main():
             if root == REPO:
                 for q in ("fuzzy.inl", "fuzy.inl"):
                     t, out = med(lambda: m.call("find_files", {"query": q}))
-                    rec(f"find {q}, Jolt's repository", "fff", t, out, found="fuzzy.inl" in out)
+                    rec(f"find {q}, the {repo_name} repository", "fff", t, out, found="fuzzy.inl" in out)
                     t, out = med(lambda: seek.call("find", {"query": q, "path": REPO, "limit": 5}))
-                    rec(f"find {q}, Jolt's repository", "Seek", t, out, found="fuzzy.inl" in out)
+                    rec(f"find {q}, the {repo_name} repository", "Seek", t, out, found="fuzzy.inl" in out)
 
     daemon = pids_of("seek.exe", "--daemon")
     everything = pids_of("Everything.exe")
@@ -243,8 +253,8 @@ def main():
         if fd:
             run([fd, "-HI", "-g", "fuzzy.inl", *drives])  # warms the drives' metadata
             t, out = run([fd, "-HI", "-g", "fuzzy.inl", *drives])
-            rec(T, "fd", t, out, found=target in out, count=lines(out))
-            t, out = run([fd, "-HI", "-e", a.ext, *drives])
+            rec(T, "fd", t, out, found=target in out.replace("/", "\\"), count=lines(out))
+            t, out = run([fd, "-HI", "-e", a.ext, ".", *drives])
             rec(f"every .{a.ext}: how many, where", "fd", t, out, count=lines(out))
         if rg:
             t, out = run([rg, "--files", "--no-ignore", "--hidden", "-g", "fuzzy.inl", *drives])

@@ -1,143 +1,150 @@
-# Seek
+<p align="center"><img src="assets/seek-256.png" width="128" alt="Seek"></p>
 
-Fast file search for AI agents on Windows, as an [MCP](https://modelcontextprotocol.io) server. It lives next to [Jolt](../README.md), shares its fuzzy matching and its drive index, and runs on its own.
+<h1 align="center">Seek</h1>
 
-An agent's cost when looking for files is rarely the search itself. It is the round trips, the tokens spent reading long lists, and guessing what the user means by "the file I was working on". Seek is built around those three:
+<p align="center"><strong>Fast file search for AI agents on Windows, as an MCP server.</strong><br>
+Every drive in milliseconds, text in folders faster than ripgrep and fff, and answers in hundreds of tokens instead of hundreds of thousands.</p>
 
-- **The whole PC, always warm.** Names on every fixed drive come from an index, so finding a file anywhere takes a fraction of a second instead of minutes of `Get-ChildItem -Recurse`. One background process holds the index for every agent at once.
-- **What the user is doing.** Seek watches the drives while it runs and remembers what was created and changed, between runs too. It also knows which folders the user opens in Jolt. Results the user touched lately rank higher, and `recent` answers "what was I working on".
-- **Short answers.** Each result says why it is there ("exact name, changed 2 h ago"). `summary` gives counts by area instead of thousands of paths. Long lists are cut and say how to see more.
+<p align="center">
+<a href="https://seek.synrgs.tech"><b>Website and full benchmarks</b></a> ·
+<a href="#install">Install</a> ·
+<a href="https://github.com/SynrgStudio/seek/releases">Releases</a> ·
+<a href="CHANGELOG.md">Changelog</a>
+</p>
 
-## Measured
+<p align="center">
+<a href="https://github.com/SynrgStudio/seek/actions/workflows/build.yml"><img src="https://github.com/SynrgStudio/seek/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+<a href="https://github.com/SynrgStudio/seek/releases/latest"><img src="https://img.shields.io/github/v/release/SynrgStudio/seek" alt="Release"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0"></a>
+</p>
 
-On the author's PC: a Ryzen 7 5800X with 32 GB, two NVMe drives and a hard disk, 4.9 million files and folders. Seek and [fff](https://github.com/dmtrKovalenko/fff) ran as MCP servers, already warm. [Everything](https://www.voidtools.com) was running. The command-line tools were started for each search, the way an agent's shell starts them. Times are medians, and tokens are characters divided by four. `python -I seek\bench.py` measures the same on any PC.
+---
 
-**Names, on the whole PC**
+Coding agents spend a surprising part of their time looking for files, with tools made for people. A recursive `dir` of a user profile takes a minute and a half. Listing every `.blend` file on a PC is about 196,000 tokens of context. And "the file I was working on" means nothing to a shell.
 
-| task | Seek | Everything | Windows Search | fd, ripgrep | an agent's shell |
-|---|---|---|---|---|---|
-| find `fuzzy.inl`, place unknown | 0.05 s | 0.09 s | 0.22 s, not found: that folder isn't indexed | 4.6 s and 6.1 s with the drives' folders in memory; fd took over 15 minutes right after the drives were last read | `Get-ChildItem -Recurse`: 98 s; `dir /s`: 85 s; both over the user's profile only |
-| the same with a typo, `fuzy.inl` | 0.05 s, found | not found | | not found | not found |
-| every `.blend`: how many, where | 0.05 s, 378 tokens: 8,200, by folder | 0.07 s for the count; the list is 196,000 tokens | 0.24 s, 9 of the 8,200 | 5.0 s and 7.6 s; the list is 194,000 tokens | `dir /s`: 567 s |
-| what changed lately | 0.01 s: the user's files and the folders they opened | 0.10 s: the newest files, which are logs, caches and browser data | | | |
-
-**Text, in folders.** Seek's first search of a folder reads it from the drive; after that the folder is kept in memory, and searching it again doesn't touch the drive.
-
-| task | Seek, first search | Seek, again | fff | ripgrep, what Claude Code's Grep runs | git grep |
-|---|---|---|---|---|---|
-| `RecTake` in Jolt's repository, 65 files | 3.1 ms | 0.45 ms | 0.87 ms | 80 ms | 41 ms |
-| `CreateFileW` in every project, 10,700 files | 0.20 s | 17 ms | 53 ms | 0.84 s | |
-
-**Names, in one folder**
-
-| task | Seek | fff |
-|---|---|---|
-| `fuzzy.inl` in Jolt's repository | 0.32 ms | 0.41 ms |
-| `fuzy.inl`, with the typo | 0.34 ms | 0.44 ms |
-
-**Starting, and memory**
-
-| | Seek | Everything | fff |
-|---|---|---|---|
-| ready | 0.45 s, for every drive, from Jolt's index | always running, as a service | 0.11 s for Jolt's repository, 0.45 s for every project |
-| memory of its own | 325 MB with every project kept in memory; 22 MB with no folder kept | 492 MB | 85 MB for the repository, 229 MB for every project |
-
-Seek is one process for every agent, while each agent session starts its own fff for its own folder. Seek keeps at most 512 MB of folders and lets one go after 20 minutes without searches.
-
-What the others do better:
-- **Everything** finds names as fast and keeps working with no agent around. It needs its service or administrator rights, doesn't forgive typos, doesn't rank, and answers with the whole list.
-- **fff** ranks files by how often they are opened and by git status, can return only the definitions of a name, and searches several names in one call.
-- **ripgrep** needs nothing running and no memory, and it is on every developer's PC.
-
-Measured by others:
-- [fff's own benchmark](https://github.com/dmtrKovalenko/fff#readme) timed agents doing whole tasks. In a big repository a task took 24.7 s with shell search and 14.3 s with fff, while the tokens barely moved, 85,400 against 82,500. In a held-out run, one model was slower with fff: 9.0 s against 8.1 s. Most of an agent's time is the model, not the search.
-- On a 500,000-file Chromium checkout, fff's README reports 3 to 9 s for each ripgrep run, against under 10 ms for each fff query.
-- [Everything's FAQ](https://www.voidtools.com/faq/): a million files take about a minute to index and use about 100 MB of memory.
-- [ripgrep's README](https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools), on the Linux kernel's source: ripgrep 0.08 s, git grep 0.27 s, The Silver Searcher 0.44 s, ugrep 0.64 s, ack 2.9 s.
-
-## Tools
+Seek gives the agent three tools that answer those questions directly:
 
 | tool | what it does |
 |---|---|
-| `find` | Files and folders by name, anywhere on the PC or below `path`. Fuzzy and typo-tolerant. Ranks exact names and programs first, then what the user changed lately, what is in folders they use in Jolt, and what is inside `near`; caches and package stores go last. Query syntax: words must appear in the name in order, `.png` or `ext:png,jpg` for the extension, `*` and `?` as wildcards, `!word` to leave names out, `type:file` or `type:folder`, and a fragment with a slash must be in the path. `summary` counts by area, folder, extension and drive. |
-| `grep` | Text inside the files of a folder or one file: code and text in UTF-8, UTF-16 or the system code page, and documents through the text filters Windows has (PDF and RTF come with Windows; Word and Excel need Office or the Office filter pack). Follows `.gitignore`, also the ones above the folder up to the repository's root, `.git\info\exclude`, the user's global excludes and `.ignore`, and skips dependency and cache folders, binaries and files only in the cloud; `ignored` searches all of those too, and a `path` inside an ignored folder is searched as given. Literal by default, `regex` for a pattern; case-insensitive unless the pattern has capitals. `glob` picks files (`*.cpp`, `!*.min.js`), `context` adds lines around, `limit` and `offset` page, `summary` counts per file. With no matches in the exact case it retries ignoring case, and with no text matches it suggests file names that look like the pattern. |
-| `recent` | What the user created or changed lately and the folders they opened in Jolt, newest first. Machine-wide from what Seek saw change; with `path`, also the dates on disk below that folder. `query` filters names, `since` sets how far back (`30m`, `2h`, `3d`, `2w`). System places are left out unless `include_system`. |
+| **`find`** | Files and folders by name on every fixed drive, from an index, in milliseconds. Typo-tolerant, and ranked by what the user changed lately and the folders they use. `summary` gives counts by area instead of a list. |
+| **`grep`** | Text inside the files of a folder, and inside its PDF and Office documents. Follows `.gitignore`. After a folder's first search, it is kept in memory and kept current by the drive watchers. |
+| **`recent`** | What the user created, changed and opened lately, without the logs and caches programs write all the time. |
 
-## Setting it up
+One background process serves every agent on the PC. It keeps the index, watches the drives, and remembers what changed. Seek only reads, never looks in private places such as keys, browser profiles or password managers, and logs every call for the user to see.
 
-Build it with `seek\build.bat` (Visual Studio with C++). It produces `seek\build\seek.exe`, which is all there is to install.
+## Measured
 
-**Claude Code**
+On one PC with 4.9 million files and folders on three drives, against what an agent would use otherwise. Times are medians, and every tool was warm. [The website](https://seek.synrgs.tech#method) has the method, every table, and the raw numbers.
 
+| task | Seek | the others |
+|---|---|---|
+| find a file by name, place unknown | **52 ms** | Everything 93 ms; fd 4.7 s with the folders in memory, over 15 min from disk; `dir /s` 85 s over one profile |
+| the same, with a typo | **57 ms**, found | Everything, fd, ripgrep: not found |
+| how many `.blend` files, and where | **55 ms**, 378 tokens | Everything's list: 196,438 tokens |
+| text in every project, 10,700 files | **11 ms** | fff 36 ms; ripgrep 487 ms |
+| text in one repository | **0.40 ms** | fff 0.61 ms; git grep 35 ms; ripgrep 29 ms |
+| a name in one repository | **0.33 ms** | fff 0.43 ms |
+
+For text, Seek's first search of a folder reads it from the drive: 132 ms for every project, which is already faster than ripgrep. The times in the table are the searches after that, answered from memory.
+
+## Install
+
+In PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex
 ```
-claude mcp add seek --scope user -- "C:\path\to\seek\build\seek.exe"
-```
 
-**Codex**
+The installer:
 
-```
-codex mcp add seek -- "C:\path\to\seek\build\seek.exe"
-```
+- downloads `seek.exe` from the latest release into `%LOCALAPPDATA%\Programs\Seek`;
+- checks it against the release's SHA-256;
+- adds it to **Claude Code** and **Codex** when they are installed.
 
-**Any other MCP client** (Cursor, Cline, Claude Desktop…): add a stdio server whose command is the full path to `seek.exe`, with no arguments:
+Running it again updates Seek.
+
+For any other MCP client, such as Cursor, Cline or Claude Desktop, add a stdio server whose command is the full path to `seek.exe`, with no arguments:
 
 ```json
-{ "mcpServers": { "seek": { "command": "C:\\path\\to\\seek\\build\\seek.exe" } } }
+{ "mcpServers": { "seek": { "command": "C:\\Users\\me\\AppData\\Local\\Programs\\Seek\\seek.exe" } } }
 ```
 
-A line for the project's `CLAUDE.md` or `AGENTS.md` helps the agent reach for it:
+A line in the project's `CLAUDE.md` or `AGENTS.md` helps the agent reach for it:
 
 ```
 To find files by name anywhere on this PC, or search text in a folder, use the seek tools (find, grep, recent) instead of shell commands.
 ```
 
-## How it runs
+## How it works
 
-- `seek.exe` with no arguments is what the agent starts. It speaks MCP over stdin and stdout and hands every tool call to `seek.exe --daemon`, starting it the first time. If the daemon can't be reached, the call runs in the agent's process instead.
-- The daemon keeps running for every agent. It accepts connections only from the same user on the same machine, and a daemon from an older build steps aside for a newer one.
-- **The index:** with Jolt installed, Seek copies Jolt's index (`%LOCALAPPDATA%\Jolt\index-X.bin`) and picks up a newer one every 10 minutes. It copies instead of reading it in place because Jolt replaces that file when it reindexes. Without Jolt, Seek walks each drive once, which takes minutes on a big one, and saves the result. Either way, what is created after the index was taken comes from the drive watchers.
-- **Folders kept in memory:** after a folder's first search, the daemon reads its text files into memory in the background, so the next searches there don't read the drive. The drive watchers keep them current: a file that changes is read again, one that appears is added, one that goes is dropped, and a changed `.gitignore` makes the folder be read again. Searches for hidden or ignored files walk the folder as before. At most 512 MB of folders are kept, and one nobody searched for 20 minutes is let go; `cache = 0` in `seek.txt` turns this off.
-- **Its files** live in `%LOCALAPPDATA%\Jolt\seek`: its copies of the index, `activity.txt` with what it saw change, and `log.txt` with every call.
-- No administrator rights are needed.
+```mermaid
+flowchart LR
+  A["Claude Code, Codex, Cursor…"] -- "MCP over stdio" --> S["seek.exe<br/>one per session"]
+  S -- "named pipe, this user only" --> D["seek.exe --daemon<br/>one for every agent"]
+  D --- I[("index of every drive")]
+  D --- W["drive watchers"]
+  W --> C[("folders kept in memory")]
+  W --> R[("what changed, between runs")]
+  D --- L[("log.txt: every call")]
+```
 
-## Privacy
+- **The index.** With [Jolt](https://github.com/SynrgStudio/jolt) installed, Seek copies the index Jolt builds from the drive's file table. Without it, Seek walks each drive itself on 8 threads, with no special rights, and walks them again once a day. On the PC above, that took 18 s for 2 million names on an SSD. The drive watchers cover what changes in between.
+- **The search.**
+  - Names go through Jolt's fuzzy matching on 8 threads.
+  - Text search lists folders and reads files on 12 threads.
+  - Binaries are recognized from their first 8 KB.
+  - A file's bytes are checked for the pattern before any text is decoded, starting from the pattern's rarest character with `memchr`.
+- **Folders in memory.** After a folder's first search, its text files are kept in memory, up to 512 MB in all.
+  - A changed file is read again on the next search, new files are added, and deleted ones dropped.
+  - A changed `.gitignore` makes the folder be read again.
+  - A folder nobody searched for 20 minutes is let go.
+- **The process.** Every session's `seek.exe` hands its calls to one background process through a named pipe that only the same user on the same machine can open. A process from an older build makes way for a newer one.
 
-Seek only reads. Some places are never listed, searched or remembered:
-- SSH, GPG, AWS, Azure, Kubernetes and Docker credentials
-- Windows' credential and key stores
-- browser profiles: Chrome, Edge, Brave, Thorium, Vivaldi, Opera, Firefox
-- password managers: Bitwarden, 1Password, KeePass
-- Telegram and Signal data
-- the Recycle Bin, `System Volume Information`, and `.kdbx`, `.pfx`, `.p12` and `.ppk` files
+The website explains each part in depth, with the measurements behind every design choice: [seek.synrgs.tech](https://seek.synrgs.tech).
 
-More can be added in `%APPDATA%\Jolt\seek.txt`:
+## Settings
+
+`%APPDATA%\Seek\seek.txt`:
 
 ```
 exclude = C:\Users\me\Private      a folder
 exclude = *.key                     files with that extension
 exclude = secrets                   any folder or file with that name
 log = no                            don't write log.txt
-cache = 256                         MB of folders kept in memory for grep; 0 for none
+cache = 256                         MB of folders kept in memory; 0 for none
+jolt = no                           don't use Jolt's index or what Jolt knows
 ```
 
-`log.txt` records every call: when, which agent, which tool, the arguments, and how long it took. It is there so the user can see what agents looked for.
+Seek's own files are in `%LOCALAPPDATA%\Seek`: its copies of the index, `activity.txt` with what it saw change, and `log.txt` with every call.
 
 ## Command line
 
 ```
-seek --cli find "{\"query\":\"report .pdf\"}"     run a tool in this process
+seek --cli find "{\"query\":\"report .pdf\"}"      run a tool in this process
 seek --call grep "{\"pattern\":\"TODO\",\"path\":\"C:\\\\code\"}"   through the background process
-seek --stop                                        stop the background process
+seek --reindex                                      walk the drives again now
+seek --stop                                         stop the background process
 ```
 
-## Tests
+## Building and testing
 
-`python -I seek\test.py` builds test files in `%TEMP%\seek-test` and checks the tools, the MCP protocol and the background process. Outside that folder it only reads.
+With Visual Studio and its C++ tools:
 
-`python -I seek\bench.py --ext blend` times Seek against whatever it finds of Everything's `es.exe`, ripgrep, fff's MCP server and Windows Search, and with `--walkers`, fd and ripgrep over every drive. The tools are taken from PATH or from the variables at the top of the script.
+```
+build.bat                         build\seek.exe
+python -I tests\test.py           about 60 checks, in %TEMP%, with a background process of their own
+python -I bench\bench.py          the comparison, against whatever tools it finds
+```
+
+Releases are built and tested by GitHub Actions from the tagged commit, and published with their SHA-256.
 
 ## Limits
 
-- Windows only, fixed drives. Other drives and network shares can still be searched by giving their folder as `path`; they are walked instead of looked up.
-- `recent` only knows what changed while Seek was running, plus the dates on disk when given a `path`.
-- `regex` uses the standard library's ECMAScript engine: correct but slower than literal search, and it reads only the first 4,096 characters of very long lines.
+- **Windows only, fixed drives.** Network shares and other drives can still be searched by giving their folder as `path`: they are walked instead.
+- **`regex` is slower than ripgrep's.** It uses the C++ standard library's engine, which is correct but much slower, and it looks at the first 4,096 characters of very long lines.
+- **The first index takes a while without Jolt** on a big drive, longer on a hard disk. Searches below a folder work right away meanwhile, by walking it.
+- **`recent` knows what changed while Seek was running,** plus the dates on disk when given a `path`.
+
+## License
+
+GPL-3.0, like [Jolt](https://github.com/SynrgStudio/jolt), whose fuzzy matching and index format Seek shares.
