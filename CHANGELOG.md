@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.3
 
+- **After an update, open sessions get the new tools without a restart.** The background process sends its version with each answer (a few bytes the agent never sees); when the session's `seek.exe` is older, it tells the client once that the tools changed, and gives it the new version's list, so new parameters and new tools can be used. Claude Code asks for the list again right away. It works from this version on: a session must already be 0.3.3 or later for a later update to reach it this way. Before, a session kept the tools it started with until it was restarted.
 - **The installer puts Seek's folder on the user's PATH,** so `seek --status` and `seek --version` work in a console; `-NoPath` leaves it out. The PATH is read and written as the registry keeps it, its `%VARIABLES%` unexpanded, and new consoles have it at once.
 
 ## 0.3.2
