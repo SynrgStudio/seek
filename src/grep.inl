@@ -20,8 +20,9 @@ struct IgnSet {
 };
 using IgnChain = std::vector<std::shared_ptr<const IgnSet>>;
 
-std::shared_ptr<const IgnSet> LoadIgnore(const std::wstring& dir) {
-    std::ifstream in(Join(dir, L".gitignore"), std::ios::binary);
+// The rules of one ignore file, for the folder they are relative to.
+std::shared_ptr<const IgnSet> LoadIgnore(const std::wstring& file, const std::wstring& dir) {
+    std::ifstream in(file, std::ios::binary);
     if (!in) return nullptr;
     auto set = std::make_shared<IgnSet>();
     set->baseKey = Key(dir);
@@ -86,7 +87,44 @@ bool Ignored(const IgnChain& chain, const std::wstring& key, const std::wstring&
     return ign;
 }
 
-// The .gitignore files that apply to root from above it: from the repository's root down.
+// The user's own excludes for every repository: core.excludesFile in .gitconfig, or git's default place for it.
+const std::wstring& GlobalExcludes() {
+    static const std::wstring path = [] {
+        const std::wstring home = Expand(L"%USERPROFILE%");
+        std::ifstream in(home + L"\\.gitconfig", std::ios::binary);
+        std::string line;
+        bool core = false;
+        while (std::getline(in, line)) {
+            std::wstring l = Lower(Trim(Wide(line)));
+            if (!l.empty() && l[0] == L'[') core = l.rfind(L"[core]", 0) == 0;
+            const size_t eq = l.find(L'=');
+            if (!core || eq == std::wstring::npos || Trim(l.substr(0, eq)) != L"excludesfile") continue;
+            std::wstring v = Trim(Wide(line).substr(Wide(line).find(L'=') + 1));
+            if (v.size() >= 2 && v.front() == L'"' && v.back() == L'"') v = v.substr(1, v.size() - 2);
+            if (!v.empty() && v[0] == L'~') v = home + v.substr(1);
+            return Normalize(Expand(v));
+        }
+        const std::wstring xdg = Expand(L"%XDG_CONFIG_HOME%");
+        return (xdg.find(L'%') == std::wstring::npos && !xdg.empty() ? xdg : home + L"\\.config") + L"\\git\\ignore";
+    }();
+    return path;
+}
+
+// The ignore files that start applying in a folder. In a repository's root, first the user's global excludes and the
+// repository's .git\info\exclude; then .gitignore, then .ignore (the file ripgrep, fd and fff also follow). Later
+// rules win, as in git.
+void AddIgnores(const std::wstring& dir, IgnChain& chain) {
+    const DWORD git = GetFileAttributesW(Join(dir, L".git").c_str());
+    if (git != INVALID_FILE_ATTRIBUTES) {
+        if (auto s = LoadIgnore(GlobalExcludes(), dir)) chain.push_back(s);
+        if (git & FILE_ATTRIBUTE_DIRECTORY)
+            if (auto s = LoadIgnore(Join(dir, L".git\\info\\exclude"), dir)) chain.push_back(s);
+    }
+    if (auto s = LoadIgnore(Join(dir, L".gitignore"), dir)) chain.push_back(s);
+    if (auto s = LoadIgnore(Join(dir, L".ignore"), dir)) chain.push_back(s);
+}
+
+// The ignore files that apply to root from above it: from the repository's root down.
 IgnChain IgnoresAbove(const std::wstring& root) {
     std::vector<std::wstring> dirs;
     for (std::wstring d = ParentOf(root); !d.empty(); d = ParentOf(d)) {
@@ -98,8 +136,7 @@ IgnChain IgnoresAbove(const std::wstring& root) {
         }
     }
     IgnChain chain;
-    for (size_t i = dirs.size(); i-- > 0;)
-        if (auto s = LoadIgnore(dirs[i])) chain.push_back(s);
+    for (size_t i = dirs.size(); i-- > 0;) AddIgnores(dirs[i], chain);
     return chain;
 }
 
@@ -137,7 +174,19 @@ enum class ReadOutcome { Ok, Binary, Big, Fail, NoMatch };
 struct BytePre {
     bool on = false, icase = false;
     std::string pat;  // lowercase when icase
+    size_t anchor = 0;  // its rarest character: the one looked for first
 };
+
+// How common a character is in text and code; the rarest one of a pattern has the fewest places to check around it.
+int Commonness(char c, bool icase) {
+    static const char order[] = "etaoinsrlcdhupmfgybwvkxjqz";  // letters, the most common first
+    if (c == ' ') return 100;
+    if (c >= 'a' && c <= 'z') return 60 - static_cast<int>(strchr(order, c) - order);
+    if (c >= 'A' && c <= 'Z') return icase ? 60 - static_cast<int>(strchr(order, c + 32) - order) : 22 - static_cast<int>(strchr(order, c + 32) - order) / 2;
+    if (c >= '0' && c <= '9') return 30;
+    if (strchr("_.,;()=\"'-/:\t", c)) return 40;
+    return 15;
+}
 
 BytePre MakeBytePre(const std::wstring& pattern, bool regex, bool icase) {
     BytePre p;
@@ -147,51 +196,98 @@ BytePre MakeBytePre(const std::wstring& pattern, bool regex, bool icase) {
     p.on = true;
     p.icase = icase;
     for (const wchar_t c : pattern) p.pat += static_cast<char>(icase && c >= L'A' && c <= L'Z' ? c + 32 : c);
+    for (size_t i = 1; i < p.pat.size(); ++i)
+        if (Commonness(p.pat[i], icase) < Commonness(p.pat[p.anchor], icase)) p.anchor = i;
     return p;
 }
 
-bool BytesMayMatch(const BytePre& p, const char* data, size_t n) {
-    if (!p.icase) return std::string_view(data, n).find(p.pat) != std::string_view::npos;
-    std::string folded(data, n);
-    for (char& c : folded) c = static_cast<char>(static_cast<unsigned char>(c - 'A') < 26 ? c | 0x20 : c);
-    return std::string_view(folded).find(p.pat) != std::string_view::npos;
+// Are the pattern's bytes in these? Its rarest character is looked for with memchr, and the rest compared around it.
+bool BytesMayMatch(const BytePre& p, const char* h, size_t n) {
+    const size_t m = p.pat.size(), a = p.anchor;
+    if (n < m) return false;
+    const char* first = h + a;            // the first place the anchor can be
+    const char* last = h + (n - m) + a;   // and the last
+    auto at = [&](const char* f) {
+        const char* s = f - a;
+        if (!p.icase) return memcmp(s, p.pat.data(), m) == 0;
+        for (size_t i = 0; i < m; ++i) {
+            char c = s[i];
+            if (static_cast<unsigned char>(c - 'A') < 26) c |= 0x20;
+            if (c != p.pat[i]) return false;
+        }
+        return true;
+    };
+    auto next = [&](const char* from, char c) -> const char* {
+        return from > last ? nullptr : static_cast<const char*>(memchr(from, c, static_cast<size_t>(last - from) + 1));
+    };
+    const char lo = p.pat[a], up = p.icase && lo >= 'a' && lo <= 'z' ? static_cast<char>(lo - 32) : lo;
+    if (lo == up) {
+        for (const char* f = next(first, lo); f; f = next(f + 1, lo))
+            if (at(f)) return true;
+        return false;
+    }
+    const char *fl = next(first, lo), *fu = next(first, up);
+    while (fl || fu) {
+        const bool low = fl && (!fu || fl < fu);
+        const char* f = low ? fl : fu;
+        if (at(f)) return true;
+        if (low) fl = next(f + 1, lo);
+        else fu = next(f + 1, up);
+    }
+    return false;
 }
 
-ReadOutcome ReadText(const std::wstring& path, uint64_t size, std::wstring& out, const BytePre* pre = nullptr) {
+// A file's bytes: all of them for text, only the start when that shows it is binary.
+struct Raw {
+    std::unique_ptr<char[]> p;
+    size_t n = 0;
+};
+
+ReadOutcome ReadRaw(const std::wstring& path, uint64_t size, Raw& raw) {
     if (size > kTextMax) return ReadOutcome::Big;
     HANDLE h = CreateFileW(LongPath(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                            FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (h == INVALID_HANDLE_VALUE) return ReadOutcome::Fail;
-    std::unique_ptr<char[]> buf(new char[static_cast<size_t>(size) + 1]);
-    const auto* u = reinterpret_cast<const unsigned char*>(buf.get());
-    // The start first: a binary file shows in it, and then the rest isn't read.
+    raw.p.reset(new char[static_cast<size_t>(size) + 1]);
+    const auto* u = reinterpret_cast<const unsigned char*>(raw.p.get());
     const DWORD head = static_cast<DWORD>(std::min<uint64_t>(size, 8192));
     DWORD got = 0;
-    BOOL ok = ReadFile(h, buf.get(), head, &got, nullptr);
+    BOOL ok = ReadFile(h, raw.p.get(), head, &got, nullptr);
     const bool utf16 = got >= 2 && ((u[0] == 0xFF && u[1] == 0xFE) || (u[0] == 0xFE && u[1] == 0xFF));
     const bool bom8 = got >= 3 && u[0] == 0xEF && u[1] == 0xBB && u[2] == 0xBF;
-    if (ok && !utf16 && !bom8 && memchr(buf.get(), 0, std::min<size_t>(got, 8000))) {
+    if (ok && !utf16 && !bom8 && memchr(raw.p.get(), 0, std::min<size_t>(got, 8000))) {
         CloseHandle(h);
+        raw = {};
         return ReadOutcome::Binary;
     }
     if (ok && got == head && size > head) {
         DWORD more = 0;
-        ok = ReadFile(h, buf.get() + got, static_cast<DWORD>(size - got), &more, nullptr);
+        ok = ReadFile(h, raw.p.get() + got, static_cast<DWORD>(size - got), &more, nullptr);
         got += more;
     }
     CloseHandle(h);
-    if (!ok) return ReadOutcome::Fail;
-    const char* b = buf.get();
-    if (utf16 && u[0] == 0xFF) {
+    if (!ok) {
+        raw = {};
+        return ReadOutcome::Fail;
+    }
+    raw.n = got;
+    return ReadOutcome::Ok;
+}
+
+// The text in a file's bytes, in whichever encoding they are: UTF-16 with its mark, UTF-8, or the system code page.
+// NoMatch: the pattern can't be in it, so it wasn't decoded.
+ReadOutcome DecodeBytes(const char* b, size_t got, std::wstring& out, const BytePre* pre) {
+    const auto* u = reinterpret_cast<const unsigned char*>(b);
+    if (got >= 2 && u[0] == 0xFF && u[1] == 0xFE) {
         out.assign(reinterpret_cast<const wchar_t*>(b + 2), (got - 2) / 2);
         return ReadOutcome::Ok;
     }
-    if (utf16) {
+    if (got >= 2 && u[0] == 0xFE && u[1] == 0xFF) {
         out.resize((got - 2) / 2);
         for (size_t i = 0; i < out.size(); ++i) out[i] = static_cast<wchar_t>((u[2 + 2 * i] << 8) | u[3 + 2 * i]);
         return ReadOutcome::Ok;
     }
-    const size_t start = bom8 ? 3 : 0;
+    const size_t start = got >= 3 && u[0] == 0xEF && u[1] == 0xBB && u[2] == 0xBF ? 3 : 0;
     if (pre && pre->on && !BytesMayMatch(*pre, b + start, got - start)) return ReadOutcome::NoMatch;
     const int len = static_cast<int>(got - start);
     UINT cp = CP_UTF8;
@@ -205,6 +301,12 @@ ReadOutcome ReadText(const std::wstring& path, uint64_t size, std::wstring& out,
     out.resize(n);
     if (n) MultiByteToWideChar(cp, flags, b + start, len, out.data(), n);
     return ReadOutcome::Ok;
+}
+
+ReadOutcome ReadText(const std::wstring& path, uint64_t size, std::wstring& out, const BytePre* pre = nullptr) {
+    Raw raw;
+    const ReadOutcome r = ReadRaw(path, size, raw);
+    return r == ReadOutcome::Ok ? DecodeBytes(raw.p.get(), raw.n, out, pre) : r;
 }
 
 using LoadIFilterFn = HRESULT(WINAPI*)(PCWSTR, IUnknown*, void**);
@@ -310,6 +412,7 @@ struct FileHits {
 struct GrepQuery {
     std::wstring pattern, root;
     bool regex = false, ignoreCase = true, documents = true, hidden = false;
+    bool ignored = false;  // also what .gitignore leaves out, and dependency and cache folders
     std::vector<std::wstring> include, exclude;  // lowercase globs: on the name, or on the path below root with a '\'
     int context = 1, perFile = 5;
     uint64_t budgetMs = 6000;
@@ -319,7 +422,7 @@ struct GrepResult {
     std::vector<FileHits> files;  // in the order they were walked
     uint64_t searched = 0, docs = 0, big = 0, binaries = 0, unreadable = 0;
     std::unordered_map<std::wstring, int> noFilter;  // documents without a text filter, by extension
-    bool timedOut = false;
+    bool timedOut = false, fromMemory = false;
     std::wstring error;
 };
 
@@ -431,6 +534,116 @@ bool WalkBefore(const std::wstring& a, const std::wstring& b) {
     }
 }
 
+// One file met on a walk.
+struct WalkFile {
+    std::wstring path, key, nameKey;
+    uint64_t size = 0;
+    bool doc = false, binaryExt = false;
+};
+
+// Walks a folder the way grep searches it, on a pool of threads that both list folders and take files: hidden entries
+// only with q.hidden; ignore files, dependency and cache folders followed unless q.ignored; private places never; q's
+// globs pick the files. onDir(key, chain) gets each folder entered, with the rules for its entries; onFile(file) gets
+// each file, on the pool's threads, which have COM ready for document filters. false: stop or the deadline cut it short.
+template <class OnDir, class OnFile>
+bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bool inJunk, uint64_t deadline, const std::atomic<bool>& stop,
+                OnDir&& onDir, OnFile&& onFile) {
+    struct DirJob {
+        std::wstring dir;
+        IgnChain chain;
+    };
+    std::mutex qm;
+    std::condition_variable cv;
+    std::deque<WalkFile> files;  // taken first, so the queue stays short
+    std::vector<DirJob> dirs;
+    dirs.push_back({root, std::move(chain)});
+    unsigned busy = 0;  // threads holding a job; none, with nothing queued, is the end
+    std::atomic<bool> late{false};
+    const std::wstring rootKey = Key(root);
+    const size_t relAt = rootKey.size() + (rootKey.back() == L'\\' ? 0 : 1);
+    const bool globs = !q.include.empty() || !q.exclude.empty();
+
+    auto listDir = [&](DirJob& d, std::vector<WalkFile>& outFiles, std::vector<DirJob>& outDirs) {
+        if (!q.ignored) AddIgnores(d.dir, d.chain);
+        onDir(Key(d.dir), d.chain);
+        const std::wstring pattern = LongPath(d.dir) + (d.dir.back() == L'\\' ? L"*" : L"\\*");
+        WIN32_FIND_DATAW fd;
+        HANDLE f = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (f == INVALID_HANDLE_VALUE) return;
+        do {
+            if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2]))) continue;
+            std::wstring path = Join(d.dir, fd.cFileName), key = Key(path), nameKey = Lower(fd.cFileName);
+            if (PrivateLeaf(key, nameKey)) continue;  // the folders above were checked on the way down
+            if (!q.hidden && (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) continue;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
+                if (!inJunk && JunkDirs().count(nameKey)) continue;
+                if (Ignored(d.chain, key, nameKey, true)) continue;
+                outDirs.push_back({std::move(path), d.chain});
+                continue;
+            }
+            if (Ignored(d.chain, key, nameKey, false)) continue;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) continue;  // only in the cloud: reading it downloads it
+            if (globs && !GlobsPass(q, nameKey, key.substr(std::min(key.size(), relAt)))) continue;
+            const std::wstring ext = ExtOf(nameKey);
+            const uint64_t size = (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+            const bool doc = DocExts().count(ext) != 0;
+            if (doc && size > kDocMax) continue;
+            outFiles.push_back({std::move(path), std::move(key), std::move(nameKey), size, doc, BinaryExts().count(ext) != 0});
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+    };
+
+    auto work = [&] {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        std::vector<WalkFile> newFiles;
+        std::vector<DirJob> newDirs;
+        for (;;) {
+            WalkFile fj;
+            DirJob dj;
+            bool isFile = false;
+            {
+                std::unique_lock lk(qm);
+                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || busy == 0; });
+                if (files.empty() && dirs.empty()) break;  // and no thread busy: nothing more will come
+                if (!files.empty()) {
+                    fj = std::move(files.front());
+                    files.pop_front();
+                    isFile = true;
+                } else {
+                    dj = std::move(dirs.back());
+                    dirs.pop_back();
+                }
+                ++busy;
+            }
+            if (stop || GetTickCount64() > deadline) late = true;
+            else if (isFile) onFile(fj);
+            else listDir(dj, newFiles, newDirs);
+            bool wake;
+            {
+                std::lock_guard lk(qm);
+                for (WalkFile& x : newFiles) files.push_back(std::move(x));
+                for (size_t i = newDirs.size(); i-- > 0;) dirs.push_back(std::move(newDirs[i]));  // the first subfolder on top
+                --busy;
+                wake = !newFiles.empty() || !newDirs.empty() || (busy == 0 && files.empty() && dirs.empty());
+            }
+            newFiles.clear();
+            newDirs.clear();
+            if (wake) cv.notify_all();
+        }
+        if (SUCCEEDED(co)) CoUninitialize();
+    };
+    const unsigned nth = std::max(2u, std::min(12u, std::thread::hardware_concurrency()));
+    std::vector<std::thread> workers;
+    for (unsigned i = 0; i < nth; ++i) workers.emplace_back(work);
+    for (auto& t : workers) t.join();
+    return !late;
+}
+
+// Folders kept in memory (cache.inl): an answer from there, or nothing; and a folder to keep after a walk.
+std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const BytePre& pre);
+void CacheAfterWalk(const GrepQuery& q, uint64_t textBytes);
+
 GrepResult RunGrep(const GrepQuery& q) {
     GrepResult res;
     Matcher m;
@@ -447,72 +660,12 @@ GrepResult RunGrep(const GrepQuery& q) {
         }
     }
     const BytePre pre = MakeBytePre(q.pattern, q.regex, q.ignoreCase);
+    if (auto kept = CachedGrep(q, m, pre)) return std::move(*kept);
     const uint64_t deadline = GetTickCount64() + q.budgetMs;
-    // One pool of threads does both jobs: a folder job lists the folder and queues its files and subfolders, a file
-    // job reads and searches the file. Files go first, so the queue stays short.
-    struct FileJob {
-        std::wstring path;
-        uint64_t size = 0;
-        bool doc = false;
-    };
-    struct DirJob {
-        std::wstring dir;
-        IgnChain chain;
-    };
-    std::mutex qm, fm;
-    std::condition_variable cv;
-    std::deque<FileJob> files;
-    std::vector<DirJob> dirs;
-    unsigned busy = 0;  // threads holding a job; none, with nothing queued, is the end
-    std::atomic<bool> late{false};
-    std::atomic<uint64_t> searched{0}, docs{0}, big{0}, binaries{0}, unreadable{0};
+    std::mutex fm;
+    std::atomic<uint64_t> searched{0}, docs{0}, big{0}, binaries{0}, unreadable{0}, textBytes{0};
 
-    const std::wstring rootKey = Key(q.root);
-    const size_t relAt = rootKey.size() + (rootKey.back() == L'\\' ? 0 : 1);
-    const bool inJunk = AnySegment(rootKey, std::vector<std::wstring>(JunkDirs().begin(), JunkDirs().end()));
-
-    auto consider = [&](std::vector<FileJob>& out, std::wstring path, const std::wstring& nameKey, const std::wstring& relKey, uint64_t size) {
-        if (!GlobsPass(q, nameKey, relKey)) return;
-        const std::wstring ext = ExtOf(nameKey);
-        if (DocExts().count(ext)) {
-            if (q.documents && size <= kDocMax) out.push_back({std::move(path), size, true});
-            return;
-        }
-        if (BinaryExts().count(ext)) {
-            ++binaries;
-            return;
-        }
-        out.push_back({std::move(path), size, false});
-    };
-
-    auto listDir = [&](DirJob& d, std::vector<FileJob>& outFiles, std::vector<DirJob>& outDirs) {
-        if (auto s = LoadIgnore(d.dir)) d.chain.push_back(s);
-        const std::wstring pattern = LongPath(d.dir) + (d.dir.back() == L'\\' ? L"*" : L"\\*");
-        WIN32_FIND_DATAW fd;
-        HANDLE f = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
-        if (f == INVALID_HANDLE_VALUE) return;
-        do {
-            if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2]))) continue;
-            std::wstring path = Join(d.dir, fd.cFileName);
-            const std::wstring key = Key(path), nameKey = Lower(fd.cFileName);
-            if (PrivateLeaf(key, nameKey)) continue;  // the folders above were checked on the way down
-            if (!q.hidden && (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) continue;
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
-                if (!inJunk && JunkDirs().count(nameKey)) continue;
-                if (Ignored(d.chain, key, nameKey, true)) continue;
-                outDirs.push_back({std::move(path), d.chain});
-                continue;
-            }
-            if (Ignored(d.chain, key, nameKey, false)) continue;
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) continue;  // only in the cloud: reading it downloads it
-            const std::wstring relKey = key.substr(std::min(key.size(), relAt));
-            consider(outFiles, std::move(path), nameKey, relKey, (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow);
-        } while (FindNextFileW(f, &fd));
-        FindClose(f);
-    };
-
-    auto searchFile = [&](const FileJob& j) {
+    auto searchFile = [&](const WalkFile& j) {
         std::wstring text;
         FileHits fh;
         fh.path = j.path;
@@ -520,12 +673,13 @@ GrepResult RunGrep(const GrepQuery& q) {
         if (j.doc) {
             if (!DocText(j.path, text, std::min(deadline, GetTickCount64() + 4000))) {
                 std::lock_guard lk(fm);
-                ++res.noFilter[ExtOf(j.path)];
+                ++res.noFilter[ExtOf(j.nameKey)];
                 return;
             }
             ++docs;
         } else {
             const ReadOutcome r = ReadText(j.path, j.size, text, &pre);
+            if (r == ReadOutcome::Ok || r == ReadOutcome::NoMatch) textBytes += j.size;
             if (r == ReadOutcome::NoMatch) {
                 ++searched;
                 return;
@@ -543,60 +697,32 @@ GrepResult RunGrep(const GrepQuery& q) {
         }
     };
 
-    auto work = [&] {
-        const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        std::vector<FileJob> newFiles;
-        std::vector<DirJob> newDirs;
-        for (;;) {
-            FileJob fj;
-            DirJob dj;
-            bool isFile = false;
-            {
-                std::unique_lock lk(qm);
-                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || busy == 0; });
-                if (files.empty() && dirs.empty()) break;  // and no thread busy: nothing more will come
-                if (!files.empty()) {
-                    fj = std::move(files.front());
-                    files.pop_front();
-                    isFile = true;
-                } else {
-                    dj = std::move(dirs.back());
-                    dirs.pop_back();
-                }
-                ++busy;
-            }
-            if (GetTickCount64() > deadline) late = true;
-            else if (isFile) searchFile(fj);
-            else listDir(dj, newFiles, newDirs);
-            bool wake;
-            {
-                std::lock_guard lk(qm);
-                for (FileJob& x : newFiles) files.push_back(std::move(x));
-                for (size_t i = newDirs.size(); i-- > 0;) dirs.push_back(std::move(newDirs[i]));  // the first subfolder on top
-                --busy;
-                wake = !newFiles.empty() || !newDirs.empty() || (busy == 0 && files.empty() && dirs.empty());
-            }
-            newFiles.clear();
-            newDirs.clear();
-            if (wake) cv.notify_all();
-        }
-        if (SUCCEEDED(co)) CoUninitialize();
-    };
-
+    const std::wstring rootKey = Key(q.root);
     const DWORD ra = GetFileAttributesW(LongPath(q.root).c_str());
+    bool done = true;
     if (Private(rootKey)) {
         // nothing to search: the tools refuse private places before this
     } else if (ra != INVALID_FILE_ATTRIBUTES && !(ra & FILE_ATTRIBUTE_DIRECTORY)) {
         WIN32_FILE_ATTRIBUTE_DATA d{};
         FileInfo(q.root, d);
-        files.push_back({q.root, (static_cast<uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow, DocExts().count(ExtOf(Lower(LeafOf(q.root)))) != 0});
+        const std::wstring nameKey = Lower(LeafOf(q.root));
+        const WalkFile one{q.root, rootKey, nameKey, (static_cast<uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow,
+                           DocExts().count(ExtOf(nameKey)) != 0, false};
+        std::thread([&] {  // with COM ready, for a document's filter
+            const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            searchFile(one);
+            if (SUCCEEDED(co)) CoUninitialize();
+        }).join();
     } else {
-        dirs.push_back({q.root, IgnoresAbove(q.root)});
+        const bool inJunk = q.ignored || AnySegment(rootKey, std::vector<std::wstring>(JunkDirs().begin(), JunkDirs().end()));
+        const std::atomic<bool> never{false};
+        done = WalkFolder(q.root, q.ignored ? IgnChain{} : IgnoresAbove(q.root), q, inJunk, deadline, never,
+                          [](const std::wstring&, const IgnChain&) {},
+                          [&](const WalkFile& f) {
+                              if (f.binaryExt) ++binaries;
+                              else if (!f.doc || q.documents) searchFile(f);
+                          });
     }
-    const unsigned nth = std::max(2u, std::min(12u, std::thread::hardware_concurrency()));
-    std::vector<std::thread> workers;
-    for (unsigned i = 0; i < nth; ++i) workers.emplace_back(work);
-    for (auto& t : workers) t.join();
     // the order a single walk would give: a folder's files, then its subfolders, by name
     std::sort(res.files.begin(), res.files.end(), [](const FileHits& a, const FileHits& b) { return WalkBefore(a.path, b.path); });
     res.searched = searched;
@@ -604,6 +730,7 @@ GrepResult RunGrep(const GrepQuery& q) {
     res.big = big;
     res.binaries = binaries;
     res.unreadable = unreadable;
-    res.timedOut = late;
+    res.timedOut = !done;
+    if (done && ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_DIRECTORY)) CacheAfterWalk(q, textBytes);
     return res;
 }

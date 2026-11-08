@@ -21,24 +21,33 @@ On the author's PC: a Ryzen 7 5800X with 32 GB, two NVMe drives and a hard disk,
 | every `.blend`: how many, where | 0.05 s, 378 tokens: 8,200, by folder | 0.07 s for the count; the list is 196,000 tokens | 0.24 s, 9 of the 8,200 | 5.0 s and 7.6 s; the list is 194,000 tokens | `dir /s`: 567 s |
 | what changed lately | 0.01 s: the user's files and the folders they opened | 0.10 s: the newest files, which are logs, caches and browser data | | | |
 
-**Text, in folders**
+**Text, in folders.** Seek's first search of a folder reads it from the drive; after that the folder is kept in memory, and searching it again doesn't touch the drive.
 
-| task | Seek | fff | ripgrep, what Claude Code's Grep runs | git grep |
-|---|---|---|---|---|
-| `RecTake` in Jolt's repository, 64 files | 0.002 s | 0.001 s | 0.08 s | 0.03 s |
-| `CreateFileW` in every project, 33,000 files | 0.33 s | 0.035 s | 0.69 s | |
+| task | Seek, first search | Seek, again | fff | ripgrep, what Claude Code's Grep runs | git grep |
+|---|---|---|---|---|---|
+| `RecTake` in Jolt's repository, 65 files | 3.1 ms | 0.45 ms | 0.87 ms | 80 ms | 41 ms |
+| `CreateFileW` in every project, 10,700 files | 0.20 s | 17 ms | 53 ms | 0.84 s | |
+
+**Names, in one folder**
+
+| task | Seek | fff |
+|---|---|---|
+| `fuzzy.inl` in Jolt's repository | 0.32 ms | 0.41 ms |
+| `fuzy.inl`, with the typo | 0.34 ms | 0.44 ms |
 
 **Starting, and memory**
 
 | | Seek | Everything | fff |
 |---|---|---|---|
-| ready | 0.3 to 1 s, for every drive, from Jolt's index | always running, as a service | 0.1 s for Jolt's repository, 0.25 s for every project |
-| memory of its own | 22 MB, plus its index files, 274 MB, which Windows reads in and drops as needed | 489 MB | 117 MB for the repository, 233 MB for every project |
+| ready | 0.45 s, for every drive, from Jolt's index | always running, as a service | 0.11 s for Jolt's repository, 0.45 s for every project |
+| memory of its own | 325 MB with every project kept in memory; 22 MB with no folder kept | 492 MB | 85 MB for the repository, 229 MB for every project |
+
+Seek is one process for every agent, while each agent session starts its own fff for its own folder. Seek keeps at most 512 MB of folders and lets one go after 20 minutes without searches.
 
 What the others do better:
-- **Everything** finds names as fast. It needs its service or administrator rights. It doesn't forgive typos and doesn't rank, and it answers with the whole list.
-- **fff** searches text inside one folder ten times faster than Seek, because it keeps the contents of every file in memory. Each server covers one folder, and it refuses the user's home folder and the drives' roots.
-- **ripgrep** needs nothing running and is on every developer's PC. Seek reads the files on each search the way ripgrep does, and was twice as fast on these folders.
+- **Everything** finds names as fast and keeps working with no agent around. It needs its service or administrator rights, doesn't forgive typos, doesn't rank, and answers with the whole list.
+- **fff** ranks files by how often they are opened and by git status, can return only the definitions of a name, and searches several names in one call.
+- **ripgrep** needs nothing running and no memory, and it is on every developer's PC.
 
 Measured by others:
 - [fff's own benchmark](https://github.com/dmtrKovalenko/fff#readme) timed agents doing whole tasks. In a big repository a task took 24.7 s with shell search and 14.3 s with fff, while the tokens barely moved, 85,400 against 82,500. In a held-out run, one model was slower with fff: 9.0 s against 8.1 s. Most of an agent's time is the model, not the search.
@@ -51,7 +60,7 @@ Measured by others:
 | tool | what it does |
 |---|---|
 | `find` | Files and folders by name, anywhere on the PC or below `path`. Fuzzy and typo-tolerant. Ranks exact names and programs first, then what the user changed lately, what is in folders they use in Jolt, and what is inside `near`; caches and package stores go last. Query syntax: words must appear in the name in order, `.png` or `ext:png,jpg` for the extension, `*` and `?` as wildcards, `!word` to leave names out, `type:file` or `type:folder`, and a fragment with a slash must be in the path. `summary` counts by area, folder, extension and drive. |
-| `grep` | Text inside the files of a folder or one file: code and text in UTF-8, UTF-16 or the system code page, and documents through the text filters Windows has (PDF and RTF come with Windows; Word and Excel need Office or the Office filter pack). Follows `.gitignore`, also the ones above the folder up to the repository's root, and skips dependency and cache folders, binaries and files only in the cloud. Literal by default, `regex` for a pattern; case-insensitive unless the pattern has capitals. `glob` picks files (`*.cpp`, `!*.min.js`), `context` adds lines around, `limit` and `offset` page, `summary` counts per file. With no matches in the exact case it retries ignoring case, and with no text matches it suggests file names that look like the pattern. |
+| `grep` | Text inside the files of a folder or one file: code and text in UTF-8, UTF-16 or the system code page, and documents through the text filters Windows has (PDF and RTF come with Windows; Word and Excel need Office or the Office filter pack). Follows `.gitignore`, also the ones above the folder up to the repository's root, `.git\info\exclude`, the user's global excludes and `.ignore`, and skips dependency and cache folders, binaries and files only in the cloud; `ignored` searches all of those too, and a `path` inside an ignored folder is searched as given. Literal by default, `regex` for a pattern; case-insensitive unless the pattern has capitals. `glob` picks files (`*.cpp`, `!*.min.js`), `context` adds lines around, `limit` and `offset` page, `summary` counts per file. With no matches in the exact case it retries ignoring case, and with no text matches it suggests file names that look like the pattern. |
 | `recent` | What the user created or changed lately and the folders they opened in Jolt, newest first. Machine-wide from what Seek saw change; with `path`, also the dates on disk below that folder. `query` filters names, `since` sets how far back (`30m`, `2h`, `3d`, `2w`). System places are left out unless `include_system`. |
 
 ## Setting it up
@@ -87,6 +96,7 @@ To find files by name anywhere on this PC, or search text in a folder, use the s
 - `seek.exe` with no arguments is what the agent starts. It speaks MCP over stdin and stdout and hands every tool call to `seek.exe --daemon`, starting it the first time. If the daemon can't be reached, the call runs in the agent's process instead.
 - The daemon keeps running for every agent. It accepts connections only from the same user on the same machine, and a daemon from an older build steps aside for a newer one.
 - **The index:** with Jolt installed, Seek copies Jolt's index (`%LOCALAPPDATA%\Jolt\index-X.bin`) and picks up a newer one every 10 minutes. It copies instead of reading it in place because Jolt replaces that file when it reindexes. Without Jolt, Seek walks each drive once, which takes minutes on a big one, and saves the result. Either way, what is created after the index was taken comes from the drive watchers.
+- **Folders kept in memory:** after a folder's first search, the daemon reads its text files into memory in the background, so the next searches there don't read the drive. The drive watchers keep them current: a file that changes is read again, one that appears is added, one that goes is dropped, and a changed `.gitignore` makes the folder be read again. Searches for hidden or ignored files walk the folder as before. At most 512 MB of folders are kept, and one nobody searched for 20 minutes is let go; `cache = 0` in `seek.txt` turns this off.
 - **Its files** live in `%LOCALAPPDATA%\Jolt\seek`: its copies of the index, `activity.txt` with what it saw change, and `log.txt` with every call.
 - No administrator rights are needed.
 
@@ -107,6 +117,7 @@ exclude = C:\Users\me\Private      a folder
 exclude = *.key                     files with that extension
 exclude = secrets                   any folder or file with that name
 log = no                            don't write log.txt
+cache = 256                         MB of folders kept in memory for grep; 0 for none
 ```
 
 `log.txt` records every call: when, which agent, which tool, the arguments, and how long it took. It is there so the user can see what agents looked for.

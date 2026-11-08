@@ -105,10 +105,14 @@ ToolOut ToolFind(const Json& a) {
         if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
     if (!WaitIndex(30000)) return {L"The drive index is still loading. Try again in a few seconds.", true};
     LoadUsage();
-    std::vector<AddedItem> added;
+    std::vector<AddedItem> added;  // what was created since the index was taken: below the folder, when there is one
     {
+        const std::wstring scopeKey = Key(scope);
         std::lock_guard lk(g_actM);
-        added = g_added;
+        if (scope.empty()) added = g_added;
+        else
+            for (const AddedItem& x : g_added)
+                if (IsUnder(x.key, scopeKey)) added.push_back(x);
     }
     const auto vols = Volumes();
     const size_t keep = summary ? 20000 : static_cast<size_t>(std::max(limit * 10, 300));
@@ -177,7 +181,7 @@ ToolOut ToolFind(const Json& a) {
             const uint8_t depth = static_cast<uint8_t>(std::min<size_t>(250, std::count(p.begin(), p.end(), L'\\')));
             if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf)) {
                 ++s.total;
-                walked.push_back({p, dir});
+                walked.push_back({p, dir, k});
                 s.best.push_back(c);
             }
             return !dir || !JunkDirs().count(Lower(fd.cFileName));
@@ -353,6 +357,7 @@ ToolOut ToolGrep(const Json& a) {
     q.perFile = ArgInt(a, "per_file", 5, 1, 200);
     q.documents = ArgBool(a, "documents", true);
     q.hidden = ArgBool(a, "hidden", false);
+    q.ignored = ArgBool(a, "ignored", false);
     q.budgetMs = static_cast<uint64_t>(ArgInt(a, "time_budget_ms", 6000, 500, 60000));
     const int limit = ArgInt(a, "limit", 30, 1, 300), offset = ArgInt(a, "offset", 0, 0, 1000000);
     const bool summary = ArgBool(a, "summary", false);
@@ -375,7 +380,7 @@ ToolOut ToolGrep(const Json& a) {
     for (const FileHits& f : r.files) lines += f.matches;
     std::wstring head = L"grep \"" + q.pattern + L"\" in " + q.root + L": " + Thousands(lines) + (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
-                        L" files" + (r.docs ? L", " + Thousands(r.docs) + L" of them documents" : L"") + L").\n";
+                        L" files" + (r.docs ? L", " + Thousands(r.docs) + L" of them documents" : L"") + (r.fromMemory ? L", kept in memory" : L"") + L").\n";
     std::wstring tail;
     if (r.timedOut) tail += L"Stopped at the time budget (" + std::to_wstring(q.budgetMs / 1000) + L" s): not everything was searched. Narrow path or glob, or raise time_budget_ms.\n";
     if (!r.noFilter.empty()) {
@@ -527,8 +532,18 @@ ToolOut ToolRecent(const Json& a) {
     return {head + L":\n" + list + notes + L"\n" + tail};
 }
 
+// "0.4 ms", "12 ms", "1,234 ms"
+std::wstring Ms(double ms) {
+    if (ms < 10) {
+        wchar_t b[32];
+        swprintf_s(b, L"%.1f ms", ms);
+        return b;
+    }
+    return Thousands(static_cast<uint64_t>(ms + 0.5)) + L" ms";
+}
+
 ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& client) {
-    const uint64_t t0 = GetTickCount64();
+    const auto t0 = std::chrono::steady_clock::now();
     ToolOut out;
     try {
         if (name == "find") out = ToolFind(args);
@@ -541,6 +556,6 @@ ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& c
     std::string argText;
     JsonWrite(args, argText);
     Audit((client.empty() ? L"?" : client) + L"  " + Wide(name) + L" " + Wide(argText) + L"  ->  " + (out.error ? L"error" : L"ok") + L", " +
-          std::to_wstring(GetTickCount64() - t0) + L" ms");
+          Ms(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count()));
     return out;
 }

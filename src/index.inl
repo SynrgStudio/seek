@@ -21,6 +21,22 @@ struct Volume {
     std::vector<IdxNode> nodes;  // while it is built here
     std::vector<wchar_t> names;
     int64_t stamp = 0;  // when the index was taken
+    // Each folder's children, made the first time a search is scoped to a folder: the index lists names in the order
+    // of the drive's file table, so a folder's contents are scattered through all of it.
+    mutable std::once_flag kidsOnce;
+    mutable std::vector<uint32_t> kidStart, kids;  // the children of n: kids[kidStart[n]] up to kids[kidStart[n + 1]]
+    void Kids() const {
+        std::call_once(kidsOnce, [this] {
+            kidStart.assign(count + 1, 0);
+            for (size_t i = 1; i < count; ++i)
+                if (node[i].parent < count) ++kidStart[node[i].parent + 1];
+            for (size_t i = 0; i < count; ++i) kidStart[i + 1] += kidStart[i];
+            kids.resize(kidStart[count]);
+            std::vector<uint32_t> at(kidStart.begin(), kidStart.end() - 1);
+            for (size_t i = 1; i < count; ++i)
+                if (node[i].parent < count) kids[at[node[i].parent]++] = static_cast<uint32_t>(i);
+        });
+    }
     Volume() = default;
     Volume(const Volume&) = delete;
     ~Volume() {
@@ -243,6 +259,7 @@ std::wstring NodePath(const Volume& v, uint32_t i) {
 // A folder's node in a volume: each step looks for a child of the one before.
 bool FindNode(const Volume& v, const std::wstring& path, uint32_t& out) {
     if (path.size() < 3 || towupper(path[0]) != v.letter) return false;
+    v.Kids();
     uint32_t cur = 0;
     size_t at = 3;
     while (at < path.size()) {
@@ -250,10 +267,10 @@ bool FindNode(const Volume& v, const std::wstring& path, uint32_t& out) {
         if (end == std::wstring::npos) end = path.size();
         const size_t len = end - at;
         uint32_t found = UINT32_MAX;
-        for (size_t i = cur + 1; i < v.count; ++i) {  // children always come after their parent
-            const IdxNode& nd = v.node[i];
-            if (nd.parent == cur && nd.nameLen == len && _wcsnicmp(v.name + nd.nameOff, path.c_str() + at, len) == 0) {
-                found = static_cast<uint32_t>(i);
+        for (uint32_t k = v.kidStart[cur]; k < v.kidStart[cur + 1]; ++k) {
+            const IdxNode& nd = v.node[v.kids[k]];
+            if (nd.nameLen == len && _wcsnicmp(v.name + nd.nameOff, path.c_str() + at, len) == 0) {
+                found = v.kids[k];
                 break;
             }
         }
@@ -397,6 +414,7 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
 struct AddedItem {
     std::wstring path;
     bool dir = false;
+    std::wstring key;  // lowercase path
 };
 
 // The best candidates from the index, by score.
@@ -422,33 +440,50 @@ ScanOut ScanIndex(const std::vector<std::shared_ptr<const Volume>>& vols, const 
         uint8_t depth = 0;
     };
     std::vector<Scope> scopes(vols.size());
+    std::vector<std::vector<uint32_t>> below(vols.size());  // scoped: the nodes below the scope, from the children lists
+    size_t work = 0;
     const std::wstring scopeKey = Key(scopePath);
     for (size_t i = 0; i < vols.size(); ++i) {
         if (scopePath.empty()) {
             scopes[i].any = true;
+            work += vols[i]->count;
             continue;
         }
         uint32_t node;
-        if (FindNode(*vols[i], scopePath, node)) scopes[i] = {false, node, vols[i]->node[node].depth};
-        else scopes[i] = {false, UINT32_MAX, 0};
+        if (FindNode(*vols[i], scopePath, node)) {
+            scopes[i] = {false, node, vols[i]->node[node].depth};
+            const Volume& v = *vols[i];
+            std::vector<uint32_t> stack{node};
+            while (!stack.empty()) {
+                const uint32_t n = stack.back();
+                stack.pop_back();
+                for (uint32_t k = v.kidStart[n]; k < v.kidStart[n + 1]; ++k) {
+                    below[i].push_back(v.kids[k]);
+                    stack.push_back(v.kids[k]);
+                }
+            }
+            work += below[i].size();
+        } else {
+            scopes[i] = {false, UINT32_MAX, 0};
+        }
     }
-    const unsigned nth = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
+    const unsigned nth = work < 100000 ? 1u : std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
     std::vector<std::vector<Cand>> part(nth);
     std::vector<uint64_t> totals(nth, 0);
     auto worse = [](const Cand& a, const Cand& b) { return a.key > b.key; };  // min-heap on key
     std::vector<std::thread> th;
-    for (unsigned t = 0; t < nth; ++t) {
-        th.emplace_back([&, t] {
+    auto scan = [&](unsigned t) {
             auto& heap = part[t];
             std::wstring buf;
             for (uint32_t vi = 0; vi < vols.size(); ++vi) {
                 const Volume& v = *vols[vi];
                 const Scope& sc = scopes[vi];
                 if (!sc.any && sc.node == UINT32_MAX) continue;
-                for (size_t i = 1 + t; i < v.count; i += nth) {
+                const size_t n = sc.any ? v.count : below[vi].size();
+                for (size_t j = (sc.any ? 1 : 0) + t; j < n; j += nth) {
+                    const uint32_t i = sc.any ? static_cast<uint32_t>(j) : below[vi][j];
                     const IdxNode& nd = v.node[i];
-                    if (!sc.any && (nd.depth <= sc.depth || !InScope(v, static_cast<uint32_t>(i), sc.node, sc.depth))) continue;
-                    Cand c{0, vi, static_cast<uint32_t>(i), 0, 0};
+                    Cand c{0, vi, i, 0, 0};
                     if (!match(v.name + nd.nameOff, nd.nameLen, nd.dir != 0, nd.depth, c, buf)) continue;
                     ++totals[t];
                     if (heap.size() < keep) {
@@ -461,8 +496,10 @@ ScanOut ScanIndex(const std::vector<std::shared_ptr<const Volume>>& vols, const 
                     }
                 }
             }
-        });
-    }
+    };
+    if (nth == 1) scan(0);  // a small folder: not worth starting threads
+    else
+        for (unsigned t = 0; t < nth; ++t) th.emplace_back(scan, t);
     for (auto& x : th) x.join();
     ScanOut out;
     for (unsigned t = 0; t < nth; ++t) {
@@ -473,7 +510,7 @@ ScanOut ScanIndex(const std::vector<std::shared_ptr<const Volume>>& vols, const 
     std::wstring buf;
     for (uint32_t i = 0; i < added.size(); ++i) {
         const std::wstring& p = added[i].path;
-        if (!scopePath.empty() && !IsUnder(Key(p), scopeKey)) continue;
+        if (!scopePath.empty() && !IsUnder(added[i].key.empty() ? Key(p) : added[i].key, scopeKey)) continue;
         const std::wstring leaf = LeafOf(p);
         const uint8_t depth = static_cast<uint8_t>(std::min<size_t>(250, std::count(p.begin(), p.end(), L'\\')));
         Cand c{0, UINT32_MAX, i, 0, 0};

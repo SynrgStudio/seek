@@ -82,6 +82,24 @@ def run(cmd, timeout=1800):
         return float(timeout), ""
 
 
+def memory(pids):
+    """Private memory in MB of each process, by id."""
+    if not pids:
+        return {}
+    out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                          "Get-Process -Id " + ",".join(map(str, pids)) + " -ErrorAction SilentlyContinue | "
+                          "ForEach-Object { \"$($_.Id) $($_.PrivateMemorySize64)\" }"],
+                         capture_output=True, creationflags=NO_WINDOW).stdout.decode()
+    return {int(p[0]): int(p[1]) // 2**20 for p in (l.split() for l in out.splitlines()) if len(p) == 2}
+
+
+def pids_of(name, part=""):
+    out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                          f"Get-CimInstance Win32_Process -Filter \"Name='{name}'\" | ForEach-Object {{ \"$($_.ProcessId)|$($_.CommandLine)\" }}"],
+                         capture_output=True, creationflags=NO_WINDOW).stdout.decode("utf-8", "replace")
+    return [int(l.split("|", 1)[0]) for l in out.splitlines() if "|" in l and part in l.split("|", 1)[1]]
+
+
 def med(fn, n=5):
     ts, out = [], ""
     for _ in range(n):
@@ -118,11 +136,12 @@ def main():
     rows = []
 
     def rec(task, tool, t, out, found=None, count=None):
-        rows.append(dict(task=task, tool=tool, seconds=round(t, 4), tokens=len(out) // 4, found=found, count=count))
+        rows.append(dict(task=task, tool=tool, seconds=round(t, 6), tokens=len(out) // 4, found=found, count=count))
         f = "" if found is None else ("found" if found else "missed")
-        print(f"{task:<34} {tool:<30} {t:>9.3f} s {len(out) // 4:>9,} tok  {f} {'' if count is None else count}", flush=True)
+        shown = f"{t * 1000:9.2f} ms" if t < 1 else f"{t:9.2f} s "
+        print(f"{task:<36} {tool:<30} {shown} {len(out) // 4:>9,} tok  {f} {'' if count is None else count}", flush=True)
 
-    print(f"{'task':<34} {'tool':<30} {'time':>11} {'tokens':>13}")
+    print(f"{'task':<36} {'tool':<30} {'time':>12} {'tokens':>13}")
     run([SEEK, "--stop"])
     t0 = time.perf_counter()
     seek = Mcp([SEEK])
@@ -182,11 +201,12 @@ def main():
 
     for root, word, label in ((REPO, "RecTake", "Jolt's repository"), (PROJECTS, "CreateFileW", "every project")):
         T = f"grep {word}, {label}"
-        seek.call("grep", {"pattern": word, "path": root})  # both read the files once before timing
         if rg:
-            run([rg, "-n", word, root])
+            run([rg, "-n", word, root])  # the files in the system's cache, for every tool
+        t, out = seek.call("grep", {"pattern": word, "path": root})
+        rec(T, "Seek, first search", t, out)  # it walks the folder, then keeps it in memory
         t, out = med(lambda: seek.call("grep", {"pattern": word, "path": root}))
-        rec(T, "Seek", t, out)
+        rec(T, "Seek, again", t, out)
         if rg:
             t, out = med(lambda: run([rg, "-n", word, root]))
             rec(T, "ripgrep", t, out, count=lines(out))
@@ -198,6 +218,7 @@ def main():
             rec(f"start: first answer, {label}", "fff (scans the folder)", ready, "")
             t, out = med(lambda: m.call("grep", {"query": word}))
             rec(T, "fff", t, out)
+            rows.append(dict(task="memory", tool="fff, " + label, mb=memory([m.p.pid]).get(m.p.pid)))
             if root == REPO:
                 for q in ("fuzzy.inl", "fuzy.inl"):
                     t, out = med(lambda: m.call("find_files", {"query": q}))
@@ -205,6 +226,15 @@ def main():
                     t, out = med(lambda: seek.call("find", {"query": q, "path": REPO, "limit": 5}))
                     rec(f"find {q}, Jolt's repository", "Seek", t, out, found="fuzzy.inl" in out)
 
+    daemon = pids_of("seek.exe", "--daemon")
+    everything = pids_of("Everything.exe")
+    mem = memory(daemon + everything)
+    rows.append(dict(task="memory", tool="Seek", mb=sum(mem.get(p, 0) for p in daemon)))
+    if everything:
+        rows.append(dict(task="memory", tool="Everything", mb=sum(mem.get(p, 0) for p in everything)))
+    for r in rows:
+        if r["task"] == "memory":
+            print(f"{'memory of its own':<36} {r['tool']:<30} {r['mb']:>9} MB", flush=True)
     for m in fffs:
         m.close()
 

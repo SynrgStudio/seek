@@ -50,9 +50,12 @@ void ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
     g_act[key] = {path, when ? when : NowFt(), kind};
     if (kind == kDeleted) g_removed.insert(key);
     else g_removed.erase(key);
-    if ((kind == kCreated || kind == kRenamed) && g_added.size() < 50000) g_added.push_back({path, dir});
+    if ((kind == kCreated || kind == kRenamed) && g_added.size() < 50000) g_added.push_back({path, dir, key});
     ActPrune();
 }
+
+void CacheChanged(const std::wstring& path);  // cache.inl
+void CacheLost(wchar_t letter);
 
 void ActWatch(wchar_t letter) {
     const std::wstring root = std::wstring(1, letter) + L":\\";
@@ -65,10 +68,14 @@ void ActWatch(wchar_t letter) {
                                  FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
                                      FILE_NOTIFY_CHANGE_SIZE,
                                  &got, nullptr, nullptr)) {
-        if (!got) continue;  // too much at once: that batch is lost
+        if (!got) {  // too much at once: that batch is lost
+            CacheLost(letter);
+            continue;
+        }
         for (BYTE* p = reinterpret_cast<BYTE*>(buf.data());;) {
             const auto* f = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(p);
             const std::wstring path = root + std::wstring(f->FileName, f->FileNameLength / sizeof(wchar_t));
+            CacheChanged(path);
             switch (f->Action) {
                 case FILE_ACTION_ADDED: ActRecord(path, kCreated); break;
                 case FILE_ACTION_REMOVED: ActRecord(path, kDeleted); break;
@@ -137,7 +144,7 @@ void ActLoad(int64_t indexStamp) {
     for (const Act& x : loaded)
         if ((x.kind == kCreated || x.kind == kRenamed) && x.time > indexStamp && added.size() < 20000) {
             const DWORD at = GetFileAttributesW(x.path.c_str());
-            if (at != INVALID_FILE_ATTRIBUTES) added.push_back({x.path, (at & FILE_ATTRIBUTE_DIRECTORY) != 0});
+            if (at != INVALID_FILE_ATTRIBUTES) added.push_back({x.path, (at & FILE_ATTRIBUTE_DIRECTORY) != 0, Key(x.path)});
         }
     std::lock_guard lk(g_actM);
     for (Act& x : loaded) {

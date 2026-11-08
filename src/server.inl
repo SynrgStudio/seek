@@ -22,7 +22,7 @@ const char* kToolsJson = R"JSON([
   "required":["query"]},
  "annotations":{"readOnlyHint":true,"openWorldHint":false}},
 {"name":"grep","title":"Search text inside files",
- "description":"Search the text inside the files of a folder (or one file): code and text in any encoding, and PDF/Office documents when Windows has a text filter for them. Follows .gitignore and skips dependency and cache folders and binaries. Literal by default and case-insensitive unless the pattern has capitals; regex for a pattern. Each match shows its line with line numbers; context adds lines around.",
+ "description":"Search the text inside the files of a folder (or one file): code and text in any encoding, and PDF/Office documents when Windows has a text filter for them. Follows .gitignore (and .git/info/exclude, the user's global excludes and .ignore) and skips dependency and cache folders and binaries, unless ignored is true; a path inside an ignored folder is searched as asked. Literal by default and case-insensitive unless the pattern has capitals; regex for a pattern. Each match shows its line with line numbers; context adds lines around.",
  "inputSchema":{"type":"object","properties":{
   "pattern":{"type":"string","description":"The text to look for (or a regex with regex: true)."},
   "path":{"type":"string","description":"The folder or file to search in."},
@@ -36,6 +36,7 @@ const char* kToolsJson = R"JSON([
   "summary":{"type":"boolean","default":false,"description":"Match counts per file instead of the lines."},
   "documents":{"type":"boolean","default":true,"description":"Also read PDF and Office documents."},
   "hidden":{"type":"boolean","default":false},
+  "ignored":{"type":"boolean","default":false,"description":"Also search what .gitignore leaves out and dependency and cache folders (node_modules, build outputs)."},
   "time_budget_ms":{"type":"integer","minimum":500,"maximum":60000,"default":6000}},
   "required":["pattern","path"]},
  "annotations":{"readOnlyHint":true,"openWorldHint":false}},
@@ -169,6 +170,7 @@ int DaemonMain() {
     std::thread([] {  // saves what it saw, and picks up a newer index from Jolt
         for (int tick = 1;; ++tick) {
             Sleep(60 * 1000);
+            CacheExpire();
             if (tick % 5 == 0) ActSave();
             if (tick % 10 == 0)
                 for (wchar_t c : FixedDrives()) LoadVolume(c, false);

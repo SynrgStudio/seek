@@ -197,6 +197,7 @@ struct Rules {
     std::vector<std::wstring> noisePrefixes, noiseNames, noiseExts;  // system churn, left out of "recent" unless asked
     std::wstring profileDot;  // "c:\users\me\.": the dot folders there are programs' data (.cargo, .vscode, .t3…)
     bool log = true;
+    uint64_t cacheMb = 512;  // folders kept in memory for grep, at most
 } g_rules;
 
 void LoadRulesNow();
@@ -246,6 +247,7 @@ void LoadRulesNow() {
         if (eq == std::wstring::npos) continue;
         const std::wstring k = Lower(Trim(l.substr(0, eq))), v = Trim(l.substr(eq + 1));
         if (k == L"log") r.log = Lower(v) != L"no";
+        if (k == L"cache") r.cacheMb = static_cast<uint64_t>(_wtoi64(v.c_str()));
         if (k != L"exclude" || v.empty()) continue;
         if (v.rfind(L"*.", 0) == 0) r.exts.push_back(Lower(v.substr(1)));
         else if (v.find_first_of(L"\\/:%") == std::wstring::npos) r.names.push_back(Lower(v));
@@ -324,9 +326,23 @@ std::mutex g_logM;
 void Audit(const std::wstring& line) {
     if (!g_rules.log) return;
     std::lock_guard lk(g_logM);
+    static HANDLE h = INVALID_HANDLE_VALUE;  // kept open: a call shouldn't wait for the file to open
+    static uint64_t size = 0;
     const std::wstring f = DataDir() + L"\\log.txt";
-    WIN32_FILE_ATTRIBUTE_DATA d{};
-    if (FileInfo(f, d) && d.nFileSizeLow > 2 * 1024 * 1024) MoveFileExW(f.c_str(), (DataDir() + L"\\log.old.txt").c_str(), MOVEFILE_REPLACE_EXISTING);
-    std::ofstream out(f, std::ios::binary | std::ios::app);
-    out << Utf8(DateText(NowFt()) + L"  " + line) << "\r\n";
+    auto open = [&] {
+        h = CreateFileW(f.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        LARGE_INTEGER s{};
+        size = h != INVALID_HANDLE_VALUE && GetFileSizeEx(h, &s) ? static_cast<uint64_t>(s.QuadPart) : 0;
+    };
+    if (h == INVALID_HANDLE_VALUE) open();
+    if (size > 2 * 1024 * 1024) {
+        CloseHandle(h);
+        MoveFileExW(f.c_str(), (DataDir() + L"\\log.old.txt").c_str(), MOVEFILE_REPLACE_EXISTING);
+        open();
+    }
+    if (h == INVALID_HANDLE_VALUE) return;
+    const std::string s = Utf8(DateText(NowFt()) + L"  " + line) + "\r\n";
+    DWORD w = 0;
+    WriteFile(h, s.data(), static_cast<DWORD>(s.size()), &w, nullptr);
+    size += w;
 }

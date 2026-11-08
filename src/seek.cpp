@@ -26,7 +26,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <regex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -49,6 +51,7 @@ const char* const kBuild = SEEK_VERSION " " __DATE__ " " __TIME__;  // a daemon 
 #include "index.inl"
 #include "activity.inl"
 #include "grep.inl"
+#include "cache.inl"
 #include "tools.inl"
 #include "server.inl"
 

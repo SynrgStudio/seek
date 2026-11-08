@@ -86,6 +86,10 @@ put("repo/big.txt", "filler line\n" * 3000 + "the needle at the end of a long fi
 put("repo/order/a.txt", "ordermark\n")
 put("repo/order/z.txt", "ordermark\n")
 put("repo/order/sub/m.txt", "ordermark\n")
+put("repo/.git/info/exclude", "excluded_dir/\n")
+put("repo/excluded_dir/x.txt", "brown fox left out by info/exclude\n")
+put("repo/.ignore", "dotignored.txt\n")
+put("repo/dotignored.txt", "brown fox left out by .ignore\n")
 
 S = ROOT
 # ---- find, scoped to the test folder (walked: it was created after the index)
@@ -143,6 +147,11 @@ check("grep: no text, names hinted", "No text matches" in out or "0 matching lin
 code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo", "limit": 50})
 check("grep: .gitignore names, *.ext and folder/ rules", "generated.txt" not in out and "x.tmp" not in out and "scratch\\a.txt" not in out
       and "sub\\scratch" in out, out)
+check("grep: .git/info/exclude and .ignore", "excluded_dir" not in out and "dotignored.txt" not in out, out)
+code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo", "limit": 60, "ignored": True})
+check("grep: ignored searches all of that", all(n in out for n in ("excluded_dir", "dotignored.txt", "out.txt", "debug.log", "node_modules", "generated.txt")), out)
+code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo\\excluded_dir"})
+check("grep: a path inside an ignored folder is searched", "x.txt" in out, out)
 code, out = cli("grep", {"pattern": "needle at the end", "path": S + "\\repo"})
 check("grep: a long file, read past its start", "big.txt" in out and "3001:" in out, out)
 code, out = cli("grep", {"pattern": "QUICK brown", "path": S + "\\repo", "case": "insensitive"})
@@ -204,6 +213,54 @@ p.stdin.close()
 p.wait(timeout=10)
 log = open(os.path.join(os.environ["LOCALAPPDATA"], "Jolt", "seek", "log.txt"), encoding="utf-8", errors="replace").read()
 check("log: the calls are written down", "seek-test  find" in log, log[-800:])
+
+# ---- folders kept in memory by the background process, and kept current by its watchers
+put("live/a.txt", "alpha one\n")
+put("live/sub/b.txt", "alpha two\n")
+put("live/.gitignore", "ign/\n")
+put("live/ign/c.txt", "alpha ignored\n")
+put("live/mv/f.txt", "alpha moved\n")
+L = os.path.join(ROOT, "live")
+
+
+def g(pattern="alpha"):
+    return cli("grep", {"pattern": pattern, "path": L, "limit": 50}, via="--call")[1]
+
+
+def wait(pattern, cond, timeout=10):  # the watchers see a change a moment after it is made
+    end = time.time() + timeout
+    while True:
+        out = g(pattern)
+        if cond(out) or time.time() > end:
+            return out
+        time.sleep(0.2)
+
+
+g()  # the first search walks the folder, and then it is read into memory
+out = wait("alpha", lambda o: "kept in memory" in o)
+check("cache: a folder searched again comes from memory", "kept in memory" in out and "a.txt" in out and "b.txt" in out and "c.txt" not in out, out)
+time.sleep(0.5)
+put("live/a.txt", "beta one\n")
+out = wait("beta", lambda o: "a.txt" in o)
+check("cache: a changed file is read again", "a.txt" in out and "kept in memory" in out, out)
+put("live/new.txt", "alpha new\n")
+out = wait("alpha", lambda o: "new.txt" in o)
+check("cache: a new file is added", "new.txt" in out and "kept in memory" in out, out)
+os.remove(os.path.join(L, "sub", "b.txt"))
+out = wait("alpha", lambda o: "b.txt" not in o)
+check("cache: a deleted file goes", "b.txt" not in out and "kept in memory" in out, out)
+os.rename(os.path.join(L, "mv"), os.path.join(L, "moved"))
+out = wait("alpha", lambda o: "moved\\f.txt" in o)
+check("cache: a renamed folder is followed", "moved\\f.txt" in out and "mv\\f.txt" not in out and "kept in memory" in out, out)
+put("live/ign/c2.txt", "alpha ignored too\n")
+time.sleep(1)
+out = g()
+check("cache: what .gitignore leaves out stays out", "c2.txt" not in out and "kept in memory" in out, out)
+put("live/.gitignore", "ign/\nnew.txt\n")
+out = wait("alpha", lambda o: "new.txt" not in o)
+check("cache: a changed .gitignore applies", "new.txt" not in out and "moved\\f.txt" in out, out)
+out = cli("grep", {"pattern": "alpha", "path": L, "ignored": True, "limit": 50}, via="--call")[1]
+check("cache: ignored still walks the folder", "c2.txt" in out and "kept in memory" not in out, out)
 subprocess.run([EXE, "--stop"], timeout=30)
 shutil.rmtree(ROOT, ignore_errors=True)
 print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
