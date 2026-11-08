@@ -10,14 +10,41 @@ An agent's cost when looking for files is rarely the search itself. It is the ro
 
 ## Measured
 
-On the author's PC, with three drives and about ten million names. Seek's background process was already running. Tokens are characters divided by four.
+On the author's PC: a Ryzen 7 5800X with 32 GB, two NVMe drives and a hard disk, 4.9 million files and folders. Seek and [fff](https://github.com/dmtrKovalenko/fff) ran as MCP servers, already warm. [Everything](https://www.voidtools.com) was running. The command-line tools were started for each search, the way an agent's shell starts them. Times are medians, and tokens are characters divided by four. `python -I seek\bench.py` measures the same on any PC.
 
-| task | Seek | what an agent uses without it |
-|---|---|---|
-| find `fuzzy.inl`, location unknown | 0.7 s, every drive, 127 tokens | `Get-ChildItem -Recurse`: 98 s; `dir /s /b`: 85 s; both only over the user profile |
-| how many `.blend` files there are, and where | 1.7 s, 378 tokens | `dir /s /b` over three drives: 567 s, 104,157 tokens |
-| `RecTake` in Jolt's source | 0.07 s, 197 tokens | `Select-String`: 6.7 s; `findstr /s`: 2.8 s; both about 2.3 million tokens, because they read the build outputs too |
-| what changed lately | 0.05 s | no equivalent |
+**Names, on the whole PC**
+
+| task | Seek | Everything | Windows Search | fd, ripgrep | an agent's shell |
+|---|---|---|---|---|---|
+| find `fuzzy.inl`, place unknown | 0.05 s | 0.09 s | 0.22 s, not found: that folder isn't indexed | 4.6 s and 6.1 s with the drives' folders in memory; fd took over 15 minutes right after the drives were last read | `Get-ChildItem -Recurse`: 98 s; `dir /s`: 85 s; both over the user's profile only |
+| the same with a typo, `fuzy.inl` | 0.05 s, found | not found | | not found | not found |
+| every `.blend`: how many, where | 0.05 s, 378 tokens: 8,200, by folder | 0.07 s for the count; the list is 196,000 tokens | 0.24 s, 9 of the 8,200 | 5.0 s and 7.6 s; the list is 194,000 tokens | `dir /s`: 567 s |
+| what changed lately | 0.01 s: the user's files and the folders they opened | 0.10 s: the newest files, which are logs, caches and browser data | | | |
+
+**Text, in folders**
+
+| task | Seek | fff | ripgrep, what Claude Code's Grep runs | git grep |
+|---|---|---|---|---|
+| `RecTake` in Jolt's repository, 64 files | 0.002 s | 0.001 s | 0.08 s | 0.03 s |
+| `CreateFileW` in every project, 33,000 files | 0.33 s | 0.035 s | 0.69 s | |
+
+**Starting, and memory**
+
+| | Seek | Everything | fff |
+|---|---|---|---|
+| ready | 0.3 to 1 s, for every drive, from Jolt's index | always running, as a service | 0.1 s for Jolt's repository, 0.25 s for every project |
+| memory of its own | 22 MB, plus its index files, 274 MB, which Windows reads in and drops as needed | 489 MB | 117 MB for the repository, 233 MB for every project |
+
+What the others do better:
+- **Everything** finds names as fast. It needs its service or administrator rights. It doesn't forgive typos and doesn't rank, and it answers with the whole list.
+- **fff** searches text inside one folder ten times faster than Seek, because it keeps the contents of every file in memory. Each server covers one folder, and it refuses the user's home folder and the drives' roots.
+- **ripgrep** needs nothing running and is on every developer's PC. Seek reads the files on each search the way ripgrep does, and was twice as fast on these folders.
+
+Measured by others:
+- [fff's own benchmark](https://github.com/dmtrKovalenko/fff#readme) timed agents doing whole tasks. In a big repository a task took 24.7 s with shell search and 14.3 s with fff, while the tokens barely moved, 85,400 against 82,500. In a held-out run, one model was slower with fff: 9.0 s against 8.1 s. Most of an agent's time is the model, not the search.
+- On a 500,000-file Chromium checkout, fff's README reports 3 to 9 s for each ripgrep run, against under 10 ms for each fff query.
+- [Everything's FAQ](https://www.voidtools.com/faq/): a million files take about a minute to index and use about 100 MB of memory.
+- [ripgrep's README](https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools), on the Linux kernel's source: ripgrep 0.08 s, git grep 0.27 s, The Silver Searcher 0.44 s, ugrep 0.64 s, ack 2.9 s.
 
 ## Tools
 
@@ -95,6 +122,8 @@ seek --stop                                        stop the background process
 ## Tests
 
 `python -I seek\test.py` builds test files in `%TEMP%\seek-test` and checks the tools, the MCP protocol and the background process. Outside that folder it only reads.
+
+`python -I seek\bench.py --ext blend` times Seek against whatever it finds of Everything's `es.exe`, ripgrep, fff's MCP server and Windows Search, and with `--walkers`, fd and ripgrep over every drive. The tools are taken from PATH or from the variables at the top of the script.
 
 ## Limits
 

@@ -77,6 +77,15 @@ put("repo/blob.bin", b"brown fox\x00\x01\x02 in a binary")
 put("repo/many.txt", "".join(f"line {i} needle\n" for i in range(60)))
 put("docs/contract.docx", docx("The tenant pays the brown fox fee every month"))
 put("docs/Informe Final 2026.txt", "informe\n")
+put("repo/src/.gitignore", "generated.txt\n*.tmp\nscratch/\n")  # no "!" rules: looked up, not matched one by one
+put("repo/src/generated.txt", "brown fox generated\n")
+put("repo/src/x.tmp", "brown fox in a temp file\n")
+put("repo/src/scratch/a.txt", "brown fox in a scratch folder\n")
+put("repo/src/sub/scratch", "brown fox in a file named like an ignored folder\n")
+put("repo/big.txt", "filler line\n" * 3000 + "the needle at the end of a long file\n")
+put("repo/order/a.txt", "ordermark\n")
+put("repo/order/z.txt", "ordermark\n")
+put("repo/order/sub/m.txt", "ordermark\n")
 
 S = ROOT
 # ---- find, scoped to the test folder (walked: it was created after the index)
@@ -131,6 +140,16 @@ docs_ok = "contract.docx" in out
 check("grep: a Word document" + ("" if docs_ok else " (no .docx text filter on this PC?)"), docs_ok or "couldn't be read" in out, out)
 code, out = cli("grep", {"pattern": "engine", "path": S + "\\docs"})
 check("grep: no text, names hinted", "No text matches" in out or "0 matching lines" in out, out)
+code, out = cli("grep", {"pattern": "brown fox", "path": S + "\\repo", "limit": 50})
+check("grep: .gitignore names, *.ext and folder/ rules", "generated.txt" not in out and "x.tmp" not in out and "scratch\\a.txt" not in out
+      and "sub\\scratch" in out, out)
+code, out = cli("grep", {"pattern": "needle at the end", "path": S + "\\repo"})
+check("grep: a long file, read past its start", "big.txt" in out and "3001:" in out, out)
+code, out = cli("grep", {"pattern": "QUICK brown", "path": S + "\\repo", "case": "insensitive"})
+check("grep: ignoring case", "engine.cpp" in out and "ignoring case" not in out, out)
+code, out = cli("grep", {"pattern": "ordermark", "path": S + "\\repo\\order"})
+at = [out.find(n) for n in ("a.txt", "z.txt", "sub\\m.txt")]
+check("grep: walk order, a folder's files before its subfolders", -1 not in at and at == sorted(at), out)
 code, out = cli("grep", {"pattern": "x", "path": os.path.join(os.environ["USERPROFILE"], ".ssh")})
 check("grep: private places refused", code != 0 and ("private" in out or "Not found" in out), out)
 

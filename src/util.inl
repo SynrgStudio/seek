@@ -66,8 +66,9 @@ std::wstring Join(const std::wstring& d, const std::wstring& n) {
 // Is key k the root's, or inside it? (both lowercase)
 bool IsUnder(const std::wstring& k, const std::wstring& root) {
     if (k == root) return true;
-    const std::wstring pre = !root.empty() && root.back() == L'\\' ? root : root + L"\\";
-    return k.size() > pre.size() && k.compare(0, pre.size(), pre) == 0;
+    const bool slash = !root.empty() && root.back() == L'\\';
+    const size_t n = root.size() + (slash ? 0 : 1);  // root and its '\'
+    return k.size() > n && k.compare(0, root.size(), root) == 0 && (slash || k[root.size()] == L'\\');
 }
 
 std::wstring ExtOf(const std::wstring& name) {
@@ -275,6 +276,22 @@ bool Private(const std::wstring& key) {
     if (!ext.empty())
         for (const std::wstring& e : g_rules.exts)
             if (ext == e) return true;
+    return false;
+}
+
+// Private, for an entry in a folder that is known not to be: then only the entry's own path, name and extension can
+// make it so. The same answer as Private(key) without walking the whole path, for walks that check every entry.
+bool PrivateLeaf(const std::wstring& key, const std::wstring& nameKey) {
+    for (const std::wstring& p : g_rules.prefixes)
+        if (key == p) return true;
+    for (const std::wstring& n : g_rules.names)
+        if (nameKey == n) return true;
+    const size_t dot = nameKey.find_last_of(L'.');
+    if (dot != std::wstring::npos) {
+        const std::wstring_view ext(nameKey.data() + dot, nameKey.size() - dot);
+        for (const std::wstring& e : g_rules.exts)
+            if (ext == e) return true;
+    }
     return false;
 }
 
