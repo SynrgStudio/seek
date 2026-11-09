@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.6
+
+- **`find` takes "a phrase in quotes" as typed:** the name must have it, as whole words, ignoring case, so `"male 2"` finds `Male 2` and not `Female 2`, and a quoted full name finds that name only. Before, quotes only kept the words together as one fuzzy word, whose letters were found inside other names. Also in `recent`'s query. And with `path`, the header says the paths are relative to it, subfolders included. From a report.
+
 ## 0.3.5
 
 - **`grep` takes a leading `(?i)` in a regex,** as other engines do and agents write by habit: it ignores case. `(?m)` and `(?s)` are taken too, and change nothing, since each line is searched apart. And a regex that doesn't compile says what it probably used that the engine (ECMAScript) lacks, and what to use instead: an inline flag past the start, lookbehind, named groups, `\A` and `\z`. Before, `(?i)foo|bar` answered `regex_error(error_syntax)` and nothing more. From a report.
