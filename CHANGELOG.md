@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.7
+
+- **Ready for what Jolt learns next** (Jolt's PR #146): `usage.txt` lines with a fourth column, `file`, are files opened from Jolt or chosen in its Ctrl+P. Such a file ranks higher in `find` ("opened in Jolt"), above the folder heat that applies to the others, and `recent` lists it. And `picks.txt`, what was chosen in Ctrl+P for what was typed: a `find` for the same text puts what was picked first ("picked in Jolt for this"). Lines of three columns are read as before. From a notice by Jolt's thread.
+
 ## 0.3.6
 
 - **`find` takes "a phrase in quotes" as typed:** the name must have it, as whole words, ignoring case, so `"male 2"` finds `Male 2` and not `Female 2`, and a quoted full name finds that name only. Before, quotes only kept the words together as one fuzzy word, whose letters were found inside other names. Also in `recent`'s query. And with `path`, the header says the paths are relative to it, subfolders included. From a report.
