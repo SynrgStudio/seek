@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5
+
+- **`grep` takes a leading `(?i)` in a regex,** as other engines do and agents write by habit: it ignores case. `(?m)` and `(?s)` are taken too, and change nothing, since each line is searched apart. And a regex that doesn't compile says what it probably used that the engine (ECMAScript) lacks, and what to use instead: an inline flag past the start, lookbehind, named groups, `\A` and `\z`. Before, `(?i)foo|bar` answered `regex_error(error_syntax)` and nothing more. From a report.
+- **A start reads only the part of the change journals it needs.** What the watchers saw is saved with where each drive's journal was, every 5 minutes and when the process stops, and the next start reads from there: the time no background process watched. Before, each start read all of the journal and looked up every name made since the index, which took about 3 s on a busy drive with an index of a few hours, and grew with its age; now the first call after a start takes under a second. Without a mark (the first start of this version, or a journal that went past it), the whole journal is read as before.
+
 ## 0.3.4
 
 - **What was made while no background process ran is found.** At its start, the background process reads each drive's change journal (NTFS keeps one, readable without special rights) for what was made or renamed since the index was taken and is still there, the way the drive watchers would have seen it. Before, a file saved during an update, before the first agent call after logging in, or while the process was stopped, couldn't be found by name until the index was renewed. It adds about a second to the first call after a start, and `seek --status` says how many names it found. From a report: a file saved in Downloads during an update.
