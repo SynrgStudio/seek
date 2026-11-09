@@ -186,14 +186,39 @@ void ActStartWatching() {
 #endif
 
 std::atomic<uint64_t> g_caughtUp[26];   // per drive: names found made while Seek wasn't watching
-std::atomic<int64_t> g_journalFrom[26];  // the oldest change its journal still had
+std::atomic<int64_t> g_journalFrom[26];  // the oldest change read in its journal
+std::atomic<bool> g_journalWhole[26];    // read from its start, with no mark of where the last run left it
 std::atomic<bool> g_catchingUp{false};
 
-// Reads the drive's journal for what was made or renamed since `since` and is still there, and records it as made
-// since the index. Within a time budget.
-void CatchUp(wchar_t letter, int64_t since) {
+// Where a drive's journal was: what came before was seen by the watchers. Saved with what they saw, so that the next
+// start reads only what came after (the time no background process watched), not all of the journal.
+struct JournalMark {
+    DWORDLONG id = 0;
+    USN next = 0;
+};
+std::array<JournalMark, 26> g_journalMark;  // from activity.txt
+
+HANDLE OpenDriveRoot(wchar_t letter) {
     const std::wstring root = std::wstring(1, letter) + L":\\";
-    HANDLE vol = CreateFileW(root.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    return CreateFileW(root.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+}
+
+bool JournalNow(wchar_t letter, JournalMark& out) {
+    HANDLE vol = OpenDriveRoot(letter);
+    if (vol == INVALID_HANDLE_VALUE) return false;
+    USN_JOURNAL_DATA_V0 jd{};
+    DWORD got = 0;
+    const bool ok = DeviceIoControl(vol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0, &jd, sizeof(jd), &got, nullptr) != 0;
+    CloseHandle(vol);
+    if (ok) out = {jd.UsnJournalID, jd.NextUsn};
+    return ok;
+}
+
+// Reads the drive's journal for what was made or renamed since `since` and is still there, and records it as made
+// since the index: from the mark the last run saved when it is still in the journal, else from the journal's start.
+// Within a time budget.
+void CatchUp(wchar_t letter, int64_t since) {
+    HANDLE vol = OpenDriveRoot(letter);
     if (vol == INVALID_HANDLE_VALUE) return;
     USN_JOURNAL_DATA_V0 jd{};
     DWORD got = 0;
@@ -201,13 +226,16 @@ void CatchUp(wchar_t letter, int64_t since) {
         CloseHandle(vol);
         return;
     }
+    const JournalMark mark = g_journalMark[letter - L'A'];
+    const bool fromMark = mark.id == jd.UsnJournalID && mark.next >= jd.FirstUsn && mark.next <= jd.NextUsn;
+    g_journalWhole[letter - L'A'] = !fromMark;
     struct State {
         bool there = false, renamed = false;
         int64_t time = 0;
     };
     std::unordered_map<DWORDLONG, State> files;  // by file id: its last state in the journal
     READ_USN_JOURNAL_DATA_V1 rd{};
-    rd.StartUsn = jd.FirstUsn;
+    rd.StartUsn = fromMark ? mark.next : jd.FirstUsn;
     rd.ReasonMask = USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE | USN_REASON_RENAME_NEW_NAME;
     rd.UsnJournalID = jd.UsnJournalID;
     rd.MinMajorVersion = rd.MaxMajorVersion = 2;
@@ -282,6 +310,14 @@ void ActSave() {
     std::sort(all.begin(), all.end(), [](const Act& a, const Act& b) { return a.time > b.time; });
     if (all.size() > 40000) all.resize(40000);
     std::string out = "# Seek: changes seen on the drives. time, kind, path. Rewritten automatically.\n#since\t" + std::to_string(since) + "\n";
+    // Where each watched drive's journal is now: the next start reads it from here. Not while catching up, nor for a
+    // drive without a watcher: what comes before the mark wouldn't have been seen.
+    if (!g_catchingUp)
+        for (const wchar_t c : FixedDrives()) {
+            JournalMark m;
+            if ((g_watchAlive & (1u << (c - L'A'))) && JournalNow(c, m))
+                out += "#usn\t" + std::string(1, static_cast<char>(c)) + "\t" + std::to_string(m.id) + "\t" + std::to_string(m.next) + "\n";
+        }
     for (const Act& a : all) out += std::to_string(a.time) + "\t" + std::to_string(a.kind) + "\t" + Utf8(a.path) + "\n";
     const std::wstring f = ActFile(), tmp = f + L".tmp";
     {
@@ -302,6 +338,12 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.rfind("#since\t", 0) == 0) {
             since = _strtoi64(line.c_str() + 7, nullptr, 10);
+            continue;
+        }
+        if (line.rfind("#usn\t", 0) == 0 && line.size() > 7 && line[5] >= 'A' && line[5] <= 'Z' && line[6] == '\t') {  // "#usn\tC\t<journal id>\t<next usn>"
+            char* end = nullptr;
+            const DWORDLONG id = _strtoui64(line.c_str() + 7, &end, 10);
+            if (end && *end == '\t') g_journalMark[static_cast<size_t>(line[5] - 'A')] = {id, _strtoi64(end + 1, nullptr, 10)};
             continue;
         }
         if (line.empty() || line[0] == '#') continue;

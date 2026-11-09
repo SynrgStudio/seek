@@ -738,7 +738,8 @@ std::wstring StatusText() {
     std::wstring caught;
     for (const wchar_t c : drives)
         if (const int64_t from = g_journalFrom[c - L'A'])
-            caught += std::wstring(caught.empty() ? L"" : L", ") + c + L": " + Thousands(g_caughtUp[c - L'A']) + L" (it goes back to " + DateText(from) + L")";
+            caught += std::wstring(caught.empty() ? L"" : L", ") + c + L": " + Thousands(g_caughtUp[c - L'A']) +
+                      (g_journalWhole[c - L'A'] ? L" (all of its journal, back to " + DateText(from) + L")" : L" (from where the last run left it, " + DateText(from) + L")");
     out += g_catchingUp ? L"Catching up with what was made while no background process watched, from the drives' change journals.\n"
            : caught.empty() ? L""
                             : L"Made while no background process watched, found at its start in the drives' change journals: " + caught + L".\n";
