@@ -389,7 +389,7 @@ ToolOut ToolFind(const Json& a) {
     const uint64_t matches = total - std::min(total, gone);
     const uint64_t after = matches - std::min<uint64_t>(matches, static_cast<uint64_t>(skipped) + shown);  // after this page
     const std::wstring count = (exact ? L"" : L"about ") + Thousands(matches) + (matches == 1 ? L" match" : L" matches");
-    std::wstring head = L"find \"" + query + L"\" " + where + (scope.empty() ? L"" : L" (paths below it)") + L": ";
+    std::wstring head = L"find \"" + query + L"\" " + where + (scope.empty() ? L"" : L" (paths relative to it, subfolders included)") + L": ";
     if (!shown) {
         if (!skipped && !offset) return {L"Nothing named like \"" + query + L"\" " + where + L" still exists (the index had some that are gone)."};
         if (after) return {head + count + L"; paging goes through the best " + Thousands(kRanked) + L" by name, and offset " + std::to_wstring(offset) +

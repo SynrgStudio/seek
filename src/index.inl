@@ -368,6 +368,7 @@ bool InScope(const Volume& v, uint32_t i, uint32_t scope, uint8_t scopeDepth) {
 struct NameQuery {
     std::vector<std::wstring> words, exts, notWords, pathParts;
     std::vector<std::vector<std::wstring>> globs;  // one of each group must match: "*.{ts,tsx}" is a group of two
+    std::vector<std::wstring> phrases;  // "in quotes": in the name as typed, whole words (they are among the words too)
     int kind = 0;  // 1 folders, 2 files
     std::wstring text;
     bool Empty() const { return words.empty() && exts.empty() && globs.empty() && pathParts.empty(); }
@@ -378,23 +379,25 @@ std::vector<std::wstring> ExpandBraces(const std::wstring& g);
 NameQuery ParseNameQuery(const std::wstring& q) {
     NameQuery out;
     out.text = q;
-    std::vector<std::wstring> tokens;
+    std::vector<std::pair<std::wstring, bool>> tokens;  // and whether it was in quotes
     std::wstring cur;
-    bool quoted = false;
+    bool quoted = false, hadQuotes = false;
     for (wchar_t c : q) {
         if (c == L'"') {
             quoted = !quoted;
+            hadQuotes = true;
             continue;
         }
         if (iswspace(c) && !quoted) {
-            if (!cur.empty()) tokens.push_back(cur);
+            if (!cur.empty()) tokens.push_back({cur, hadQuotes});
             cur.clear();
+            hadQuotes = false;
         } else {
             cur += c;
         }
     }
-    if (!cur.empty()) tokens.push_back(cur);
-    for (const std::wstring& t : tokens) {
+    if (!cur.empty()) tokens.push_back({cur, hadQuotes});
+    for (const auto& [t, inQuotes] : tokens) {
         std::wstring l = Lower(t);
         if (l == L"type:file" || l == L"type:files") {
             out.kind = 2;
@@ -432,9 +435,23 @@ NameQuery ParseNameQuery(const std::wstring& q) {
         }
         if (l.size() > 1 && l[0] == L'.' && l.find_first_of(L".*?{", 1) == std::wstring::npos) out.exts.push_back(l);
         else if (l.find_first_of(L"*?{") != std::wstring::npos) out.globs.push_back(ExpandBraces(l));
-        else out.words.push_back(l);
+        else {
+            out.words.push_back(l);  // fuzzy, for the score; in quotes, also as typed
+            if (inQuotes) out.phrases.push_back(l);
+        }
     }
     return out;
+}
+
+// Is the phrase in the name (both lowercase) as whole words: not inside a longer word, so "male 2" isn't in "female 2"?
+bool HasPhrase(const std::wstring& name, const std::wstring& phrase) {
+    for (size_t at = name.find(phrase); at != std::wstring::npos; at = name.find(phrase, at + 1)) {
+        const size_t end = at + phrase.size();
+        const bool startOk = at == 0 || !iswalnum(name[at - 1]) || !iswalnum(phrase.front());
+        const bool endOk = end == name.size() || !iswalnum(name[end]) || !iswalnum(phrase.back());
+        if (startOk && endOk) return true;
+    }
+    return false;
 }
 
 // "*.{ts,tsx}" -> "*.ts", "*.tsx": each {a,b} in turn, nested ones too. At most 64 globs; past that, as given.
@@ -523,9 +540,11 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
         if (!FuzzyMatch(name, n, w, s, nullptr)) return false;
         score += s;
     }
-    if (!q.notWords.empty() || !q.globs.empty()) {
+    if (!q.notWords.empty() || !q.globs.empty() || !q.phrases.empty()) {
         lowerBuf.assign(name, n);
         CharLowerBuffW(lowerBuf.data(), static_cast<DWORD>(n));
+        for (const std::wstring& p : q.phrases)
+            if (!HasPhrase(lowerBuf, p)) return false;
         for (const std::wstring& w : q.notWords)
             if (lowerBuf.find(w) != std::wstring::npos) return false;
         for (const auto& any : q.globs) {  // one of each group

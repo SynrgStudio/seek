@@ -109,6 +109,8 @@ RS = ["// a header", "pub fn short_one() -> u32 {", "    1", "}", "", "pub fn ta
       "    let mut x = a + b;", "    if x > 10 {", "        x -= 1;", "    }", ""] + [f"    x += {i};" for i in range(40)] + ["    x", "}", "",
       "fn after_target() -> u32 {", "    2", "}"]
 put("blocks/code.rs", "\n".join(RS) + "\n")
+for n in ("Archer Male 2.txt", "Archer Female 2.txt", "Archer Male 3.txt", "deeper/Archer Male 2.txt"):
+    put("phrases/" + n, "x\n")
 put("blocks/code.cpp", "int helper() { return 1; }\n\nvoid target_cpp(int a)\n{\n    if (a) {\n        a++;\n    }\n}\n\nint other() { return 2; }\n")
 put("blocks/code.py", "class A:\n    def target_py(self, x):\n        y = x + 1\n\n        return y\n\n    def other(self):\n        pass\n")
 put("blocks/code.rb", "def target_rb(x)\n  x + 1\nend\n\ndef other_rb\nend\n")
@@ -165,6 +167,14 @@ code, out = cli("find", {"query": "src/*.h", "path": S})
 check("find: a path with a wildcard at its end", "repo\\src\\engine.h" in out and "engine.cpp" not in out, out)
 code, out = cli("find", {"query": "src/", "path": S})
 check("find: a path alone asks for a name", code != 0 and "where to look" in out, out)
+code, out = cli("find", {"query": '"Archer Male 2.txt"', "path": S + "\\phrases"})
+check("find: a name in quotes is found as typed, and only that", names(out) == ["Archer Male 2.txt", "deeper\\Archer Male 2.txt"], out)
+code, out = cli("find", {"query": '"male 2"', "path": S + "\\phrases"})
+check("find: a phrase in quotes is whole words: not inside a longer one", "Female" not in out and "Archer Male 2.txt" in out and "Male 3" not in out, out)
+code, out = cli("find", {"query": 'archer "male 3"', "path": S + "\\phrases"})
+check("find: words and a phrase together", names(out) == ["Archer Male 3.txt"], out)
+code, out = cli("find", {"query": '"male 4"', "path": S + "\\phrases"})
+check("find: a phrase that isn't there finds nothing, not close names", out.startswith("Nothing named like"), out)
 code, out = cli("find", {"query": "*.{cpp,h}", "path": S})
 check("find: braces in a wildcard", "engine.cpp" in out and "engine.h" in out and "notes_utf16" not in out, out)
 
