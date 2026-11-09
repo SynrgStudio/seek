@@ -8,6 +8,7 @@ EXE = os.path.join(os.path.dirname(HERE), "build", "seek.exe")
 TMP = os.environ["TEMP"]
 ROOT = os.path.join(TMP, "seek-test")
 os.environ["SEEK_HOME"] = os.path.join(TMP, "seek-test-home")  # every seek.exe started from here: its files and its daemon
+os.environ["SEEK_JOLT_HOME"] = os.path.join(TMP, "seek-test-jolt")  # what Jolt learned (usage.txt, picks.txt): the tests' own
 CI = bool(os.environ.get("CI"))  # GitHub's machines: no Jolt, and maybe no PDF text filter
 fails = 0
 
@@ -111,6 +112,16 @@ RS = ["// a header", "pub fn short_one() -> u32 {", "    1", "}", "", "pub fn ta
 put("blocks/code.rs", "\n".join(RS) + "\n")
 for n in ("Archer Male 2.txt", "Archer Female 2.txt", "Archer Male 3.txt", "deeper/Archer Male 2.txt"):
     put("phrases/" + n, "x\n")
+put("jolt/a/twin_name.txt", "x\n")
+put("jolt/b/twin_name.txt", "x\n")
+JOLT = os.environ["SEEK_JOLT_HOME"]
+shutil.rmtree(JOLT, ignore_errors=True)
+os.makedirs(JOLT)
+later = int(time.time()) + 5  # Jolt's times are seconds; after the files were made
+with open(os.path.join(JOLT, "usage.txt"), "w", encoding="utf-8") as f:  # a folder (3 columns) and a file (4)
+    f.write(f"# Jolt usage\n1\t{later}\t{os.path.join(ROOT, 'repo')}\n2\t{later}\t{os.path.join(ROOT, 'jolt', 'b', 'twin_name.txt')}\tfile\n")
+with open(os.path.join(JOLT, "picks.txt"), "w", encoding="utf-8") as f:  # what was chosen in Ctrl+P for what was typed
+    f.write(f"3\t{later}\ttwin\t{os.path.join(ROOT, 'jolt', 'a', 'twin_name.txt')}\n")
 put("blocks/code.cpp", "int helper() { return 1; }\n\nvoid target_cpp(int a)\n{\n    if (a) {\n        a++;\n    }\n}\n\nint other() { return 2; }\n")
 put("blocks/code.py", "class A:\n    def target_py(self, x):\n        y = x + 1\n\n        return y\n\n    def other(self):\n        pass\n")
 put("blocks/code.rb", "def target_rb(x)\n  x + 1\nend\n\ndef other_rb\nend\n")
@@ -175,6 +186,12 @@ code, out = cli("find", {"query": 'archer "male 3"', "path": S + "\\phrases"})
 check("find: words and a phrase together", names(out) == ["Archer Male 3.txt"], out)
 code, out = cli("find", {"query": '"male 4"', "path": S + "\\phrases"})
 check("find: a phrase that isn't there finds nothing, not close names", out.startswith("Nothing named like"), out)
+code, out = cli("find", {"query": "twin_name.txt", "path": S + "\\jolt"})
+check("find: a file opened from Jolt comes first, and says so", names(out) == ["b\\twin_name.txt", "a\\twin_name.txt"] and "opened in Jolt" in out, out)
+code, out = cli("find", {"query": "twin", "path": S + "\\jolt"})
+check("find: what was picked in Jolt for the same text comes first", names(out)[0] == "a\\twin_name.txt" and "picked in Jolt for this" in out, out)
+code, out = cli("recent", {"since": "1h", "query": "twin_name", "path": S + "\\jolt"})
+check("recent: a file opened from Jolt", "b\\twin_name.txt  ·  opened in Jolt" in out, out)
 code, out = cli("find", {"query": "*.{cpp,h}", "path": S})
 check("find: braces in a wildcard", "engine.cpp" in out and "engine.h" in out and "notes_utf16" not in out, out)
 
@@ -514,5 +531,6 @@ r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60)
 check("status: without the background process, it says so", r.returncode == 1 and "isn't running" in r.stdout.decode("utf-8", "replace"), r.stdout.decode("utf-8", "replace"))
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
+shutil.rmtree(JOLT, ignore_errors=True)
 print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
 sys.exit(1 if fails else 0)

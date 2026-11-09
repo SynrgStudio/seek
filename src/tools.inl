@@ -315,6 +315,7 @@ ToolOut ToolFind(const Json& a) {
     const int64_t now = NowFt();
     const std::wstring nearKey = Key(nearDir);
     const std::wstring scopeKey = Key(scope);
+    const std::wstring typed = Lower(query);  // as Jolt keeps what was typed in Ctrl+P
     for (Found& f : found) {
         if (NoiseBelow(f.key, scopeKey)) f.boost -= 2000;  // caches, package stores, AppData: below the user's own files
         if (f.rank >= kExactName) f.why.push_back(f.rank == kExactProgram ? L"program, exact name" : L"exact name");
@@ -328,9 +329,15 @@ ToolOut ToolFind(const Json& a) {
             f.boost += age < kHour ? 3000 : age < kDay ? 1500 : age < 7 * kDay ? 600 : 0;
             if (age < 7 * kDay) f.why.push_back(L"changed " + Ago(t));
         }
-        std::wstring used;
-        if (const double h = JoltHeat(f.key, &used); h > 0) {
-            f.boost += static_cast<int>(std::min(1200.0, 300.0 * h));
+        if (const double picked = JoltPicked(typed, f.key); picked > 0) {  // chosen in Jolt's Ctrl+P for this very text
+            f.boost += static_cast<int>(std::min(5000.0, 3000.0 + 500.0 * picked));
+            f.why.push_back(L"picked in Jolt for this");
+        }
+        if (const double h = JoltFileHeat(f.key); h > 0) {  // the file itself, opened from Jolt
+            f.boost += static_cast<int>(std::min(2000.0, 600.0 + 300.0 * h));
+            f.why.push_back(L"opened in Jolt");
+        } else if (const double fh = JoltHeat(f.key); fh > 0) {
+            f.boost += static_cast<int>(std::min(1200.0, 300.0 * fh));
             f.why.push_back(L"in a folder used in Jolt");
         }
         if (!nearKey.empty()) {
@@ -632,10 +639,11 @@ ToolOut ToolRecent(const Json& a) {
     };
     std::unordered_map<std::wstring, Item> items;
     RepoIgnore ignore;  // build outputs and the like: what a repository's .gitignore leaves out is churn too
-    auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder) {
+    // opened: the user opened it in Jolt, so it counts even where .gitignore leaves things out
+    auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder, bool opened = false) {
         const std::wstring k = Key(path);
         if (t < from || Private(k) || (!scope.empty() && !IsUnder(k, scopeKey)) || (!system && NoiseBelow(k, scopeKey))) return;
-        if (!system && !folder && ignore.Check(path, false)) return;  // a folder the user opened in Jolt always counts
+        if (!system && !opened && ignore.Check(path, false)) return;
         if (!query.empty()) {
             const std::wstring leaf = LeafOf(path);
             int sc;
@@ -660,7 +668,7 @@ ToolOut ToolRecent(const Json& a) {
         std::lock_guard lk(g_useM);
         uses = g_use;
     }
-    for (const Use& u : uses) add(u.path, u.last, L"folder opened in Jolt", true);
+    for (const Use& u : uses) add(u.path, u.last, u.file ? L"opened in Jolt" : L"folder opened in Jolt", !u.file, true);
     bool walked = false, walkCut = false;
     if (!scope.empty()) {  // the dates on disk too: also what changed before Seek was watching
         walked = true;
@@ -769,7 +777,11 @@ std::wstring StatusText() {
     std::wstring jolt = L"not used (jolt = no in seek.txt, or SEEK_NO_JOLT)";
     if (g_rules.jolt) {
         std::lock_guard lk(g_useM);
-        jolt = g_use.empty() ? L"not found; Seek keeps its own indexes" : L"the folders it saw used (" + Thousands(g_use.size()) + L") rank the results";
+        jolt = g_use.empty() ? L"not found; Seek keeps its own indexes"
+                             : L"what it saw used ranks the results: " +
+                                   Thousands(static_cast<uint64_t>(std::count_if(g_use.begin(), g_use.end(), [](const Use& u) { return !u.file; }))) + L" folders, " +
+                                   Thousands(g_useFiles.size()) +
+                                   L" files, and what was picked in Ctrl+P for " + Thousands(g_picks.size()) + L" texts";
     }
     return out + L"Jolt: " + jolt + L"\n";
 }

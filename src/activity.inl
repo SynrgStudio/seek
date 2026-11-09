@@ -397,39 +397,82 @@ bool Removed(const std::wstring& key) {
     return false;
 }
 
-// ---- what Jolt knows: usage.txt (heat, last use, folder) and recents.txt (opened last, first)
+// ---- what Jolt knows: usage.txt (heat, last use, path, and "file" for a file: a folder otherwise), picks.txt (what
+// was chosen in Ctrl+P for what was typed) and recents.txt (opened last, first)
 
 struct Use {
     std::wstring path, key;
     double heat = 0;
     int64_t last = 0;  // file time
+    bool file = false;  // a file opened from Jolt, not a folder
 };
 std::mutex g_useM;
 std::vector<Use> g_use;
+std::unordered_map<std::wstring, double> g_useFiles;  // the files' heat, by key
+std::unordered_map<std::wstring, std::unordered_map<std::wstring, double>> g_picks;  // typed (lowercase) -> key -> times
 std::vector<std::wstring> g_joltRecent;
-int64_t g_useStamp = -1, g_recentStamp = -1;
+int64_t g_useStamp = -1, g_recentStamp = -1, g_picksStamp = -1;
+
+// Jolt's settings and what it learns: %APPDATA%\Jolt, or SEEK_JOLT_HOME (the tests).
+std::wstring JoltDir() {
+    const std::wstring v = Expand(L"%SEEK_JOLT_HOME%");
+    return v.empty() || v.find(L'%') != std::wstring::npos ? RoamingAppData() + L"\\Jolt" : Normalize(v);
+}
+
+// The tab-separated fields of a line.
+std::vector<std::string> Fields(const std::string& line) {
+    std::vector<std::string> f;
+    for (size_t at = 0;;) {
+        const size_t tab = line.find('\t', at);
+        f.push_back(line.substr(at, tab == std::string::npos ? std::string::npos : tab - at));
+        if (tab == std::string::npos) return f;
+        at = tab + 1;
+    }
+}
+
+int64_t UnixToFt(const std::string& s) { return (_strtoi64(s.c_str(), nullptr, 10) + 11644473600LL) * kSecond; }
 
 void LoadUsage() {
     if (!g_rules.jolt) return;
-    const std::wstring uf = RoamingAppData() + L"\\Jolt\\usage.txt", rf = RoamingAppData() + L"\\Jolt\\recents.txt";
-    const int64_t ut = MTimeOf(uf), rt = MTimeOf(rf);
+    const std::wstring dir = JoltDir(), uf = dir + L"\\usage.txt", rf = dir + L"\\recents.txt", pf = dir + L"\\picks.txt";
+    const int64_t ut = MTimeOf(uf), rt = MTimeOf(rf), pt = MTimeOf(pf);
     std::lock_guard lk(g_useM);
     if (ut != g_useStamp) {
         g_useStamp = ut;
         g_use.clear();
+        g_useFiles.clear();
         std::ifstream in(uf, std::ios::binary);
         std::string line;
         while (std::getline(in, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.empty() || line[0] == '#') continue;
-            const size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1);
-            if (b == std::string::npos) continue;
+            const std::vector<std::string> f = Fields(line);  // heat, last use, path[, "file"]
+            if (f.size() < 3 || f[2].empty()) continue;
             Use u;
-            u.heat = atof(line.c_str());
-            u.last = (_strtoi64(line.c_str() + a + 1, nullptr, 10) + 11644473600LL) * kSecond;
-            u.path = Normalize(Wide(line.substr(b + 1)));
+            u.heat = atof(f[0].c_str());
+            u.last = UnixToFt(f[1]);
+            u.path = Normalize(Wide(f[2]));
             u.key = Key(u.path);
-            if (!Private(u.key)) g_use.push_back(std::move(u));
+            u.file = f.size() > 3 && f[3] == "file";
+            if (Private(u.key)) continue;
+            if (u.file) g_useFiles[u.key] = std::max(g_useFiles[u.key], u.heat);
+            g_use.push_back(std::move(u));
+        }
+    }
+    if (pt != g_picksStamp) {
+        g_picksStamp = pt;
+        g_picks.clear();
+        std::ifstream in(pf, std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            const std::vector<std::string> f = Fields(line);  // times, last, typed, path
+            if (f.size() < 4 || f[2].empty() || f[3].empty()) continue;
+            const std::wstring key = Key(Normalize(Wide(f[3])));
+            if (Private(key)) continue;
+            double& times = g_picks[Lower(Trim(Wide(f[2])))][key];
+            times = std::max(times, atof(f[0].c_str()));
         }
     }
     if (rt != g_recentStamp) {
@@ -452,12 +495,28 @@ double JoltHeat(const std::wstring& key, std::wstring* folder = nullptr) {
     std::lock_guard lk(g_useM);
     double best = 0;
     for (const Use& u : g_use) {
-        if (u.heat <= best || u.key.size() <= 3 || !IsUnder(key, u.key)) continue;
+        if (u.file || u.heat <= best || u.key.size() <= 3 || !IsUnder(key, u.key)) continue;
         if (std::count(key.begin() + std::min(key.size(), u.key.size()), key.end(), L'\\') > 2) continue;
         best = u.heat;
         if (folder) *folder = u.path;
     }
     return best;
+}
+
+// The heat of this file, opened from Jolt; 0 when it wasn't.
+double JoltFileHeat(const std::wstring& key) {
+    std::lock_guard lk(g_useM);
+    const auto it = g_useFiles.find(key);
+    return it == g_useFiles.end() ? 0 : it->second;
+}
+
+// How often this path was chosen in Jolt's Ctrl+P for this very text (lowercase); 0 when it wasn't.
+double JoltPicked(const std::wstring& typed, const std::wstring& key) {
+    std::lock_guard lk(g_useM);
+    const auto t = g_picks.find(typed);
+    if (t == g_picks.end()) return 0;
+    const auto k = t->second.find(key);
+    return k == t->second.end() ? 0 : k->second;
 }
 
 int JoltRecentRank(const std::wstring& key) {  // 0 = opened last in Jolt; -1 = not among the recents
