@@ -950,29 +950,61 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
 std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const BytePre& pre);
 void CacheAfterWalk(const GrepQuery& q, uint64_t textBytes);
 
+// A leading inline flag group, as other regex engines take it: "(?i)foo" is "foo" ignoring case. The standard
+// library's engine (ECMAScript) has none. m and s change nothing here, since each line is searched apart: they are taken
+// and dropped.
+std::wstring TakeInlineFlags(const std::wstring& p, bool& icase) {
+    if (p.size() < 4 || p[0] != L'(' || p[1] != L'?') return p;
+    size_t i = 2;
+    while (i < p.size() && (p[i] == L'i' || p[i] == L'm' || p[i] == L's')) ++i;
+    if (i == 2 || i >= p.size() || p[i] != L')') return p;
+    if (p.find(L'i', 2) < i) icase = true;
+    return p.substr(i + 1);
+}
+
+// For a regex that doesn't compile: what it most likely used that this engine lacks, and what to use instead.
+std::wstring RegexHint(const std::wstring& p) {
+    if (p.find(L"(?<=") != std::wstring::npos || p.find(L"(?<!") != std::wstring::npos)
+        return L" Lookbehind, (?<=...) and (?<!...), isn't supported by this engine (ECMAScript); lookahead, (?=...) and (?!...), is.";
+    if (p.find(L"(?P<") != std::wstring::npos || p.find(L"(?<") != std::wstring::npos || p.find(L"(?'") != std::wstring::npos)
+        return L" Named groups aren't supported: use a plain group ( ).";
+    for (size_t at = p.find(L"(?"); at != std::wstring::npos; at = p.find(L"(?", at + 2)) {
+        size_t i = at + 2;
+        while (i < p.size() && iswalpha(p[i])) ++i;
+        if (i > at + 2 && i < p.size() && (p[i] == L')' || p[i] == L':'))
+            return L" Inline flags like (?i) are only taken at the start of the pattern; for case, use case: \"insensitive\".";
+    }
+    if (p.find(L"\\A") != std::wstring::npos || p.find(L"\\z") != std::wstring::npos || p.find(L"\\Z") != std::wstring::npos)
+        return L" \\A and \\z aren't supported: use ^ and $ (each line is searched apart).";
+    return L"";
+}
+
 GrepResult RunGrep(const GrepQuery& q) {
     GrepResult res;
     Matcher m;
     m.regex = q.regex;
-    m.icase = q.ignoreCase;
-    m.pat = q.ignoreCase && !q.regex ? Lower(q.pattern) : q.pattern;
-    const auto flags = q.ignoreCase ? std::regex::ECMAScript | std::regex::icase | std::regex::optimize : std::regex::ECMAScript | std::regex::optimize;
+    bool icase = q.ignoreCase, withoutIcase = q.ignoreCase;
+    const std::wstring pattern = q.regex ? TakeInlineFlags(q.pattern, icase) : q.pattern;
+    const std::wstring without = q.regex ? TakeInlineFlags(q.without, withoutIcase) : q.without;
+    m.icase = icase;
+    m.pat = icase && !q.regex ? Lower(pattern) : pattern;
+    auto flags = [](bool ic) { return ic ? std::regex::ECMAScript | std::regex::icase | std::regex::optimize : std::regex::ECMAScript | std::regex::optimize; };
     if (q.regex) {
         try {
-            m.re = std::wregex(q.pattern, flags);
+            m.re = std::wregex(pattern, flags(icase));
         } catch (const std::regex_error& e) {
-            res.error = L"The regex doesn't compile: " + Wide(e.what());
+            res.error = L"The regex doesn't compile: " + Wide(e.what()) + L"." + RegexHint(pattern);
             return res;
         }
     }
-    if (!q.without.empty()) {
+    if (!without.empty()) {
         m.without = true;
-        m.withoutPat = q.ignoreCase && !q.regex ? Lower(q.without) : q.without;
+        m.withoutPat = withoutIcase && !q.regex ? Lower(without) : without;
         if (q.regex) {
             try {
-                m.withoutRe = std::wregex(q.without, flags);
+                m.withoutRe = std::wregex(without, flags(withoutIcase));
             } catch (const std::regex_error& e) {
-                res.error = L"The regex in without doesn't compile: " + Wide(e.what());
+                res.error = L"The regex in without doesn't compile: " + Wide(e.what()) + L"." + RegexHint(without);
                 return res;
             }
         }
