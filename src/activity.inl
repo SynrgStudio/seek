@@ -300,11 +300,16 @@ std::wstring ActFile() { return DataDir() + L"\\activity.txt"; }
 
 void ActSave() {
     std::vector<Act> all;
+    std::vector<AddedItem> added;
+    std::vector<std::pair<std::wstring, int64_t>> removed;
     int64_t since;
     {
         std::lock_guard lk(g_actM);
         all.reserve(g_act.size());
         for (const auto& [k, a] : g_act) all.push_back(a);
+        added.reserve(g_added.size());
+        for (const auto& [k, a] : g_added) added.push_back(a);
+        removed.assign(g_removed.begin(), g_removed.end());
         since = g_actSince;
     }
     std::sort(all.begin(), all.end(), [](const Act& a, const Act& b) { return a.time > b.time; });
@@ -318,6 +323,10 @@ void ActSave() {
             if ((g_watchAlive & (1u << (c - L'A'))) && JournalNow(c, m))
                 out += "#usn\t" + std::string(1, static_cast<char>(c)) + "\t" + std::to_string(m.id) + "\t" + std::to_string(m.next) + "\n";
         }
+    // What the index lacks and what it still has, whole. The lines below don't say it: each path has its last change
+    // only, so a file made and then changed is a changed one there, and they hold the newest 40,000.
+    for (const AddedItem& a : added) out += "#added\t" + std::to_string(a.time) + (a.dir ? "\tD\t" : "\tF\t") + Utf8(a.path) + "\n";
+    for (const auto& [k, t] : removed) out += "#removed\t" + std::to_string(t) + "\t" + Utf8(k) + "\n";
     for (const Act& a : all) out += std::to_string(a.time) + "\t" + std::to_string(a.kind) + "\t" + Utf8(a.path) + "\n";
     const std::wstring f = ActFile(), tmp = f + L".tmp";
     {
@@ -332,6 +341,8 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
     std::ifstream in(ActFile(), std::ios::binary);
     std::string line;
     std::vector<Act> loaded;
+    std::vector<AddedItem> savedAdded;  // "#added" and "#removed" lines: what the last run knew the index lacked or still had
+    std::vector<std::pair<std::wstring, int64_t>> savedRemoved;
     int64_t since = 0;
     const int64_t old = NowFt() - 30 * kDay;
     while (std::getline(in, line)) {
@@ -344,6 +355,20 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
             char* end = nullptr;
             const DWORDLONG id = _strtoui64(line.c_str() + 7, &end, 10);
             if (end && *end == '\t') g_journalMark[static_cast<size_t>(line[5] - 'A')] = {id, _strtoi64(end + 1, nullptr, 10)};
+            continue;
+        }
+        if (line.rfind("#added\t", 0) == 0) {  // "#added\t<time>\tD|F\t<path>"
+            const size_t t1 = line.find('\t', 7);
+            if (t1 != std::string::npos && t1 + 3 < line.size() && line[t1 + 2] == '\t') {
+                AddedItem x{Wide(line.substr(t1 + 3)), line[t1 + 1] == 'D', L"", _strtoi64(line.c_str() + 7, nullptr, 10)};
+                x.key = Key(x.path);
+                savedAdded.push_back(std::move(x));
+            }
+            continue;
+        }
+        if (line.rfind("#removed\t", 0) == 0) {  // "#removed\t<time>\t<key>"
+            const size_t t1 = line.find('\t', 9);
+            if (t1 != std::string::npos) savedRemoved.push_back({Wide(line.substr(t1 + 1)), _strtoi64(line.c_str() + 9, nullptr, 10)});
             continue;
         }
         if (line.empty() || line[0] == '#') continue;
@@ -376,6 +401,11 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
     }
     for (AddedItem& a : added)
         if (!g_removed.count(a.key)) g_added.emplace(a.key, std::move(a));
+    // as the last run left them, where the drive's index is no newer; the journal says what changed since
+    for (auto& [k, t] : savedRemoved)
+        if (t > stampOf(k) && !g_added.count(k)) g_removed.emplace(std::move(k), t);
+    for (AddedItem& a : savedAdded)
+        if (a.time > stampOf(a.key) && !Private(a.key) && !g_removed.count(a.key)) g_added.emplace(a.key, std::move(a));
     g_actSince = since ? since : NowFt();
 }
 

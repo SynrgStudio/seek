@@ -501,12 +501,20 @@ check("status: the folders in memory are listed", "Folders in memory for grep:" 
 check("status: what the start found in the change journals", CI or "Made while no background process watched" in out, out)
 
 
+# ---- made and then changed while a background process watched: the next one knows it too
+put("journal/made_then_changed_qz.txt", "made\n")
+time.sleep(1.5)
+put("journal/made_then_changed_qz.txt", "made, and changed\n")
+time.sleep(1.5)
+
 # ---- made while no background process ran (an update, a restart): found from the drive's change journal at the next start
 subprocess.run([EXE, "--stop"], timeout=60)
 put("journal/made_while_stopped_qz.txt", "made while nothing watched\n")
 time.sleep(0.5)
 code, out = cli("find", {"query": "made_while_stopped_qz"}, via="--call")
 check("find: a file made while no background process ran is found at its next start", "journal\\made_while_stopped_qz.txt" in out, out)
+code, out = cli("find", {"query": "made_then_changed_qz"}, via="--call")
+check("find: a file made and then changed is still known after a restart", "journal\\made_then_changed_qz.txt" in out, out)
 # and the folders the last one kept in memory are read again, with no search of them
 end = time.time() + 20
 while time.time() < end:
