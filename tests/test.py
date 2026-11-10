@@ -520,12 +520,12 @@ check("cache: so the first search after a restart comes from memory", "from Seek
 
 
 # ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside
-def pipe_call(build, tool="find"):
+def pipe_call(build, tool="find", args=None, **more):
     key = os.environ["SEEK_HOME"].replace("/", "\\").rstrip("\\").lower()  # Key(SeekHome()), hashed as InstanceTag does
     h = 2166136261
     for ch in key:
         h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
-    req = json.dumps({"build": build, "tool": tool, "args": {"query": "engine.cpp", "path": S}, "client": "test"}).encode()
+    req = json.dumps({"build": build, "tool": tool, "args": args or {"query": "engine.cpp", "path": S}, "client": "test", **more}).encode()
     with open(r"\\.\pipe\seek-%s-%08x" % (os.environ["USERNAME"], h), "r+b", buffering=0) as p:
         p.write(len(req).to_bytes(4, "little") + req)
         data = b""
@@ -542,6 +542,16 @@ stats = lambda: subprocess.run([EXE, "--stats"], capture_output=True, timeout=60
 out = stats()
 rows = out.split("errors\n", 1)[-1].split("nothing: ")[0]
 check("stats: an agent's call is counted by day and tool, and Seek's own tests aren't", re.search(today + r"\s+find\s+1\s", rows) is not None and "grep" not in rows, out)
+r = pipe_call("0.0.0 window", "__rows", {"query": "engine", "path": S})
+lines = r.get("text", "").split("\n")
+check("rows: a find for a program's own list: a count, then a kind and a path on each line",
+      lines[0].startswith("#rows\t") and lines[0].endswith("\t1\treal") and any(l.startswith("F\t") and l.endswith("engine.cpp") for l in lines[1:]), r.get("text", "")[:400])
+r = pipe_call("0.0.0 window", "__rows", {"query": "engine", "path": S}, max=1)
+check("rows: at most as many as asked", len([l for l in r.get("text", "").split("\n")[1:] if l]) == 1, r.get("text", "")[:400])
+r = pipe_call("0.0.0 window", "__rows", {"query": "zzqqxxnothing", "path": S})
+check("rows: none is a count of 0, not a sentence", r.get("text", "").startswith("#rows\t0\t"), r.get("text", "")[:400])
+out = stats()
+check("rows: a program's own searches aren't counted as an agent's", re.search(today + r"\s+find\s+1\s", out) is not None, out)
 r = pipe_call("0.0.1 Jan  1 2026 00:00:00", "__tools")
 check("daemon: gives an older session its tools", [t["name"] for t in r.get("tools", [])] == ["find", "grep", "recent"], json.dumps(r)[:300])
 r = pipe_call("99.0.0 Jan  1 2030 00:00:00")

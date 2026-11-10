@@ -153,6 +153,18 @@ void Serve(HANDLE pipe) {
         } else if (tool && tool->s == "__stats") {  // seek --stats
             const Json* days = j.at("days");
             reply = "{\"text\":" + JsonQuote(Utf8(StatsText(days && days->kind == Json::Num ? std::max(1, static_cast<int>(days->n)) : 14))) + "}";
+        } else if (tool && tool->s == "__rows") {  // Seek's window, of any version: a find, as rows for its list
+            const Json* args = j.at("args");
+            const Json* max = j.at("max");
+            ToolOut out;
+            try {
+                if (args) out = ToolFind(*args, max && max->kind == Json::Num ? static_cast<size_t>(std::clamp(max->n, 1.0, 100000.0)) : 5000);
+                else out = {L"__rows needs args", true};
+            } catch (const std::exception& e) {
+                out = {L"Seek failed: " + Wide(e.what()), true};
+            }
+            g_lastCall = GetTickCount64();
+            reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + ",\"version\":\"" SEEK_VERSION "\"}";
         } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
             reply = "{\"tools\":" + ToolsLine() + "}";
         } else {

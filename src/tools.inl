@@ -112,7 +112,10 @@ struct Found {
 // asked for with offset come from one order and none is skipped or repeated; paging goes that far.
 constexpr size_t kRanked = 2000;
 
-ToolOut ToolFind(const Json& a) {
+// rows: for a program that lists the results itself (Seek's window): that many of the best, as "D" or "F", a tab and
+// the path on each line, after a line "#rows", how many match, 1 when that count is exact, and "real", "near" (close
+// names, a typo) or "scattered". Nothing is read from the drive for them: the program reads what it shows.
+ToolOut ToolFind(const Json& a, size_t rows = 0) {
     const std::wstring query = Trim(ArgStr(a, "query"));
     if (query.empty()) return {L"find needs a query: a name or part of one, like \"report\", \"jolt.exe\", \".blend\" or \"*.log\".", true};
     std::wstring scope = ArgStr(a, "path"), nearDir = ArgStr(a, "near");
@@ -145,7 +148,7 @@ ToolOut ToolFind(const Json& a) {
             if (scope.empty() || IsUnder(k, scopeKey)) added.push_back(x);
     }
     const auto vols = Volumes();
-    const size_t keep = summary ? 20000 : kRanked;
+    const size_t keep = rows ? rows : summary ? 20000 : kRanked;
     std::wstring buf;
     auto toFound = [&](const ScanOut& s) {
         std::vector<Found> out;
@@ -257,6 +260,7 @@ ToolOut ToolFind(const Json& a) {
     }
     const bool scatteredOnly = good == 0 && !nearOnly && !found.empty();
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
+    if (found.empty() && rows) return {L"#rows\t0\t1\treal\n", false, true};
     if (found.empty())
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
                     L"; what was created since is watched.) For text inside files, use grep.\n" + building,
@@ -293,7 +297,7 @@ ToolOut ToolFind(const Json& a) {
         };
         std::wstring out = L"find \"" + query + L"\" " + where + L": " + (exact ? L"" : L"about ") + Thousands(total) + (total == 1 ? L" match" : L" matches") +
                            (exact ? L"" : L"; the counts below are from the best " + Thousands(found.size()) + L" by name") + L".\n";
-        auto rows = [&](const std::vector<std::pair<int, std::wstring>>& v) {
+        auto counts = [&](const std::vector<std::pair<int, std::wstring>>& v) {
             std::wstring s;
             for (const auto& [c, k] : v)
                 s += L"  " + std::wstring(std::max<int>(0, 6 - static_cast<int>(std::to_wstring(c).size())), L' ') + std::to_wstring(c) + L"  " +
@@ -359,6 +363,11 @@ ToolOut ToolFind(const Json& a) {
         if ((x.percent == 0) != (y.percent == 0)) return x.percent == 0;
         return x.key0 + x.boost > y.key0 + y.boost;
     });
+    if (rows) {
+        std::wstring out = L"#rows\t" + std::to_wstring(total) + (exact ? L"\t1\t" : L"\t0\t") + (nearOnly ? L"near" : scatteredOnly ? L"scattered" : L"real") + L"\n";
+        for (const Found& f : found) out += (f.dir ? L"D\t" : L"F\t") + f.path + L"\n";
+        return {out};
+    }
     // gone since the index was taken: not shown, and not counted (one that can't be read is still there)
     auto exists = [](const Found& f, WIN32_FILE_ATTRIBUTE_DATA& d) { return FileInfo(f.path, d) || GetLastError() == ERROR_ACCESS_DENIED; };
     std::wstring list;
