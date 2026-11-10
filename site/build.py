@@ -83,21 +83,21 @@ def chart(title, subtitle, items, lo=None, hi=None):
         t *= 10
     for t in ticks:
         x = X(t)
-        out.append(f'<line x1="{x:.1f}" y1="{top - 4}" x2="{x:.1f}" y2="{H - 26}" stroke="#2a2b31" stroke-width="1"/>')
-        out.append(f'<text x="{x:.1f}" y="{H - 8}" fill="#6a6a76" font-size="12" text-anchor="middle">{esc(fmt_tick(t))}</text>')
+        out.append(f'<line x1="{x:.1f}" y1="{top - 4}" x2="{x:.1f}" y2="{H - 26}" stroke="#2b2d30" stroke-width="1"/>')
+        out.append(f'<text x="{x:.1f}" y="{H - 8}" fill="#73777b" font-size="12" text-anchor="middle">{esc(fmt_tick(t))}</text>')
     for i, (label, s, seek, note) in enumerate(items):
         y = top + row_h * i + row_h / 2
         weight = "600" if seek else "400"
-        color = "#e9e9ee" if seek else "#9c9ca8"
+        color = "#f0f0ed" if seek else "#a3a4a6"
         out.append(f'<text x="{label_w - 14}" y="{y + 4:.1f}" fill="{color}" font-size="13.5" font-weight="{weight}" text-anchor="end">{esc(label)}</text>')
         if not s:
-            out.append(f'<text x="{x0 + 4}" y="{y + 4:.1f}" fill="#6a6a76" font-size="12.5">{esc(note or "–")}</text>')
+            out.append(f'<text x="{x0 + 4}" y="{y + 4:.1f}" fill="#73777b" font-size="12.5">{esc(note or "–")}</text>')
             continue
         x = X(s)
         out.append(f'<line x1="{x0}" y1="{y:.1f}" x2="{x:.1f}" y2="{y:.1f}" stroke="{"#55b8ff" if seek else "#3a3b43"}" stroke-width="2" stroke-opacity="{0.55 if seek else 1}"/>')
         r = 6.5 if seek else 5.5
         fill = "url(#g)" if seek else "#8d8d99"
-        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" stroke="#18191d" stroke-width="2"/>')
+        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" stroke="#181a1d" stroke-width="2"/>')
         text = fmt_time(s) + (f"  ·  {note}" if note else "")
         anchor_right = x > x1 - 210
         tx = x - 12 if anchor_right else x + 12
@@ -182,12 +182,12 @@ def token_chart():
            '<defs><linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6eebff"/><stop offset="1" stop-color="#3a6aff"/></linearGradient></defs>']
     for v in (100, 1000, 10000, 100000, 1000000):
         x = X(v)
-        out.append(f'<line x1="{x:.1f}" y1="4" x2="{x:.1f}" y2="{H - 26}" stroke="#2a2b31"/>')
-        out.append(f'<text x="{x:.1f}" y="{H - 8}" fill="#6a6a76" font-size="12" text-anchor="middle">{fmt_int(v)}</text>')
+        out.append(f'<line x1="{x:.1f}" y1="4" x2="{x:.1f}" y2="{H - 26}" stroke="#2b2d30"/>')
+        out.append(f'<text x="{x:.1f}" y="{H - 8}" fill="#73777b" font-size="12" text-anchor="{"end" if v == hi else "middle"}">{fmt_int(v)}</text>')
     for i, (label, v, seek) in enumerate(rows):
         y = top + row_h * i + row_h / 2
         x = X(max(v, 100))
-        out.append(f'<text x="{label_w - 14}" y="{y + 4:.1f}" fill="{"#e9e9ee" if seek else "#9c9ca8"}" font-size="13.5" font-weight="{600 if seek else 400}" text-anchor="end">{esc(label)}</text>')
+        out.append(f'<text x="{label_w - 14}" y="{y + 4:.1f}" fill="{"#f0f0ed" if seek else "#a3a4a6"}" font-size="13.5" font-weight="{600 if seek else 400}" text-anchor="end">{esc(label)}</text>')
         out.append(f'<rect x="{label_w}" y="{y - 7:.1f}" width="{x - label_w:.1f}" height="14" rx="4" fill="{"url(#g2)" if seek else "#3a3b43"}"/>')
         out.append(f'<text x="{x + 10:.1f}" y="{y + 4:.1f}" fill="{"#fff" if seek else "#c4c4ce"}" font-size="12.5">{fmt_int(v)} tokens</text>')
     out.append("</svg>")
@@ -279,7 +279,7 @@ def main():
     os.makedirs(os.path.join(OUT, "media"))
     page = fill(open(os.path.join(SITE, "index.html"), encoding="utf-8").read(), build_charts(), build_tables())
     open(os.path.join(OUT, "index.html"), "w", encoding="utf-8").write(page)
-    for f in ("style.css", "CNAME"):
+    for f in ("style.css", "CNAME", "InterVariable.woff2", "Inter-LICENSE.txt"):
         shutil.copy(os.path.join(SITE, f), OUT)
     for f in ("seek-256.png", "seek-512.png", "seek.ico"):
         shutil.copy(os.path.join(ROOT, "assets", f), os.path.join(OUT, "media"))

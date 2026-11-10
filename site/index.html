@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Seek: fast file search for AI agents on Windows</title>
 <meta name="description" content="Seek is an MCP server that lets AI agents find files by name on every drive, search text in folders and PDFs, and know what the user is working on, in milliseconds and with short answers.">
+<meta name="theme-color" content="#111214">
 <link rel="icon" href="favicon.ico">
 <link rel="stylesheet" href="style.css">
 <meta property="og:title" content="Seek: fast file search for AI agents on Windows">
@@ -16,11 +17,14 @@
 <nav class="side">
   <a class="brand" href="#top"><img src="media/seek-256.png" alt=""> Seek <span class="v">v{{VERSION}}</span></a>
   <div class="group">Start</div>
+  <div class="items">
   <a class="item" href="#install">Install</a>
   <a class="item" href="#summary">Summary</a>
   <a class="item" href="#problem">The problem</a>
   <a class="item" href="#tools">The tools</a>
+  </div>
   <div class="group">Measured</div>
+  <div class="items">
   <a class="item" href="#results">Results</a>
   <a class="item" href="#method">Method</a>
   <a class="item" href="#names">Names, every drive</a>
@@ -28,7 +32,9 @@
   <a class="item" href="#startup">Starting, memory</a>
   <a class="item" href="#others">Tool by tool</a>
   <a class="item" href="#published">Published elsewhere</a>
+  </div>
   <div class="group">How it works</div>
+  <div class="items">
   <a class="item" href="#architecture">One process for all</a>
   <a class="item" href="#index">The drive index</a>
   <a class="item" href="#ranking">Ranking</a>
@@ -36,10 +42,13 @@
   <a class="item" href="#memory">Folders in memory</a>
   <a class="item" href="#journey">From 6 s to 11 ms</a>
   <a class="item" href="#privacy">Privacy</a>
+  </div>
   <div class="group">Use</div>
+  <div class="items">
   <a class="item" href="#setup">Setup for agents</a>
   <a class="item" href="#settings">Settings</a>
   <a class="item" href="#limits">Limits, next</a>
+  </div>
   <div class="foot">
     <a href="https://github.com/SynrgStudio/seek">GitHub</a>
     <a href="https://github.com/SynrgStudio/seek/releases">Releases</a>
@@ -50,27 +59,37 @@
 
 <main><div class="wrap" id="top">
 
+<div class="top"><img src="media/seek-256.png" alt=""> Seek <a href="https://github.com/SynrgStudio/seek">GitHub ↗</a></div>
+
 <section class="hero">
-  <img class="logo" src="media/seek-256.png" alt="Seek">
-  <h1>Seek</h1>
-  <p class="tag"><strong>Fast file search for AI agents on Windows.</strong></p>
-  <p class="sub">An MCP server that finds any file by name on every drive in milliseconds, searches text in folders and documents faster than ripgrep and fff, and knows what you were working on. Its answers are a few hundred tokens, not a few hundred thousand.</p>
-  <a class="btn" href="#install">Install</a>
-  <a class="btn ghost" href="https://github.com/SynrgStudio/seek">Source on GitHub</a>
-  <p class="meta">Version {{VERSION}} · Windows 10 and 11 · Claude Code, Codex, Cursor and any MCP client · free software, GPL v3</p>
+  <div class="eyebrow"><span class="dot"></span> Fast file search for AI agents on Windows</div>
+  <div class="hero-copy">
+    <h1>Any file.<br><span>In milliseconds.</span></h1>
+    <div class="hero-side">
+      <p class="sub">An MCP server that finds any file by name on every drive in milliseconds, searches text in folders and documents faster than ripgrep and fff, and knows what you were working on. Its answers are a few hundred tokens, not a few hundred thousand.</p>
+      <div class="hero-actions"><a class="button primary" href="#install">Install <span aria-hidden="true">↓</span></a><a class="button" href="https://github.com/SynrgStudio/seek">Source on GitHub <span aria-hidden="true">↗</span></a></div>
+      <p class="meta">Version {{VERSION}} · Windows 10 and 11 · Claude Code, Codex, Cursor and any MCP client · free software, GPL v3</p>
+    </div>
+  </div>
 </section>
 
 <div class="stats">
-  <div class="stat"><div class="v">{{t:find|Seek}}</div><div class="l">to find a file by name among 4.9 million, on every drive</div></div>
-  <div class="stat"><div class="v">{{t:grep_projects|Seek, again}}</div><div class="l">to search the text of 10,700 files: 3× faster than fff, 40× faster than ripgrep</div></div>
-  <div class="stat"><div class="v">{{k:count|Seek summary}} <small>tokens</small></div><div class="l">to say how many .blend files there are and where; the plain list is {{k:count|Everything, the list}}</div></div>
-  <div class="stat"><div class="v">1 <small>process</small></div><div class="l">shared by every agent session on the PC, with one copy of everything it keeps</div></div>
+  <div class="stat"><div class="k">Names <i>⌕</i></div><div class="v">{{t:find|Seek}}</div><div class="l">to find a file by name among 4.9 million, on every drive</div></div>
+  <div class="stat"><div class="k">Text <i>≡</i></div><div class="v">{{t:grep_projects|Seek, again}}</div><div class="l">to search the text of 10,700 files: 3× faster than fff, 40× faster than ripgrep</div></div>
+  <div class="stat"><div class="k">Answer <i>◇</i></div><div class="v">{{k:count|Seek summary}} <small>tokens</small></div><div class="l">to say how many .blend files there are and where; the plain list is {{k:count|Everything, the list}}</div></div>
+  <div class="stat"><div class="k">Shared <i>↗</i></div><div class="v">1 <small>process</small></div><div class="l">shared by every agent session on the PC, with one copy of everything it keeps</div></div>
+</div>
+
+<div class="strip">
+  <div><b>Measured, not claimed</b>Every number on this page is filled in from the <a href="results.json">raw measurements</a> when the page is built, so it can't say more than was measured.</div>
+  <div><b>Repeatable</b>One PC, eight tools, the same jobs. <a href="#method">The method</a> is written down, and one command runs it again on yours.</div>
+  <div><b>The other side too</b>Where another tool does something better, <a href="#others">it says so</a>, tool by tool, and the <a href="#limits">limits</a> are listed.</div>
 </div>
 
 <h2 id="install">Install</h2>
 <p class="lead">One file, no dependencies, no administrator rights.</p>
 <div class="install">
-<pre><code>irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex</code></pre>
+<pre class="copyable"><button class="copy" type="button" data-copy>Copy</button><code>irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex</code></pre>
 <p class="cap">In PowerShell. It downloads <code>seek.exe</code> from the latest release into <code>%LOCALAPPDATA%\Programs\Seek</code>, checks it against the release's SHA-256, puts that folder on your PATH, and adds it to Claude Code and Codex when they are installed. Running it again updates Seek, with agent sessions open too: they get the new version from their next call. For other clients, see <a href="#setup">setup</a>.</p>
 <pre><code>$d = "$env:LOCALAPPDATA\Programs\Seek"
 $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
@@ -240,10 +259,10 @@ C:\Users\me\Documents\notes\ideas.md  ·  changed 2 h ago  ·  4 KB</code></pre>
 <svg viewBox="0 0 920 300" role="img" aria-label="Seek's processes">
   <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6a6a76"/></marker></defs>
   <g font-size="13" fill="#e9e9ee">
-    <rect x="16" y="30" width="170" height="44" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="101" y="57" text-anchor="middle">Claude Code</text>
-    <rect x="16" y="88" width="170" height="44" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="101" y="115" text-anchor="middle">Codex</text>
-    <rect x="16" y="146" width="170" height="44" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="101" y="173" text-anchor="middle">Cursor, any MCP client</text>
-    <rect x="236" y="30" width="150" height="160" rx="8" fill="#1f2025" stroke="#2a2b31"/>
+    <rect x="16" y="30" width="170" height="44" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="101" y="57" text-anchor="middle">Claude Code</text>
+    <rect x="16" y="88" width="170" height="44" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="101" y="115" text-anchor="middle">Codex</text>
+    <rect x="16" y="146" width="170" height="44" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="101" y="173" text-anchor="middle">Cursor, any MCP client</text>
+    <rect x="236" y="30" width="150" height="160" rx="8" fill="#1e2023" stroke="#2b2d30"/>
     <text x="311" y="58" text-anchor="middle">seek.exe</text><text x="311" y="78" text-anchor="middle" fill="#9c9ca8" font-size="12">one per session</text>
     <text x="311" y="120" text-anchor="middle" fill="#9c9ca8" font-size="12">MCP over stdio</text><text x="311" y="138" text-anchor="middle" fill="#9c9ca8" font-size="12">in and out</text>
     <rect x="450" y="20" width="250" height="180" rx="10" fill="rgba(85,184,255,0.10)" stroke="#55b8ff" stroke-opacity="0.6"/>
@@ -254,9 +273,9 @@ C:\Users\me\Documents\notes\ideas.md  ·  changed 2 h ago  ·  4 KB</code></pre>
     <text x="470" y="142" fill="#c4c4ce" font-size="12.5">· folders kept in memory</text>
     <text x="470" y="164" fill="#c4c4ce" font-size="12.5">· what changed, between runs</text>
     <text x="470" y="186" fill="#c4c4ce" font-size="12.5">· the log of every call</text>
-    <rect x="760" y="30" width="144" height="52" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="832" y="53" text-anchor="middle">Jolt's index</text><text x="832" y="71" text-anchor="middle" fill="#9c9ca8" font-size="12">copied, when there</text>
-    <rect x="760" y="96" width="144" height="52" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="832" y="119" text-anchor="middle">the drives</text><text x="832" y="137" text-anchor="middle" fill="#9c9ca8" font-size="12">walked, watched, read</text>
-    <rect x="760" y="162" width="144" height="38" rx="8" fill="#1f2025" stroke="#2a2b31"/><text x="832" y="185" text-anchor="middle" font-size="11.5">%LOCALAPPDATA%\Seek</text>
+    <rect x="760" y="30" width="144" height="52" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="832" y="53" text-anchor="middle">Jolt's index</text><text x="832" y="71" text-anchor="middle" fill="#9c9ca8" font-size="12">copied, when there</text>
+    <rect x="760" y="96" width="144" height="52" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="832" y="119" text-anchor="middle">the drives</text><text x="832" y="137" text-anchor="middle" fill="#9c9ca8" font-size="12">walked, watched, read</text>
+    <rect x="760" y="162" width="144" height="38" rx="8" fill="#1e2023" stroke="#2b2d30"/><text x="832" y="185" text-anchor="middle" font-size="11.5">%LOCALAPPDATA%\Seek</text>
   </g>
   <g stroke="#6a6a76" stroke-width="1.5" fill="none" marker-end="url(#a)">
     <path d="M186,52 H234"/><path d="M186,110 H234"/><path d="M186,168 H234"/>
@@ -372,11 +391,30 @@ seek --stop                                         <span class="c">stop the bac
 </ul>
 
 <footer>
-  Seek is free software under the GPL v3, made by <a href="https://github.com/SynrgStudio">SynrgStudio</a> alongside <a href="https://jolt.synrgs.tech">Jolt</a>, the file explorer whose index and matching it shares.
-  <a href="https://github.com/SynrgStudio/seek">Source</a> · <a href="https://github.com/SynrgStudio/seek/releases">Releases</a> · <a href="https://github.com/SynrgStudio/seek/issues">Issues</a> · <a href="results.json">Raw measurements</a>
+  <span>Seek is free software under the GPL v3, made by <a href="https://github.com/SynrgStudio">SynrgStudio</a> alongside <a href="https://jolt.synrgs.tech">Jolt</a>, the file explorer whose index and matching it shares.</span>
+  <span>  <a href="https://github.com/SynrgStudio/seek">Source</a> · <a href="https://github.com/SynrgStudio/seek/releases">Releases</a> · <a href="https://github.com/SynrgStudio/seek/issues">Issues</a> · <a href="results.json">Raw measurements</a></span>
 </footer>
 
 </div></main>
 </div>
+<script>
+document.querySelectorAll("[data-copy]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    navigator.clipboard.writeText(b.parentNode.querySelector("code").textContent).then(function () {
+      b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1600);
+    });
+  });
+});
+(function () {  // the section being read, marked in the list
+  var items = {}, heads = [].slice.call(document.querySelectorAll("h2[id]"));
+  document.querySelectorAll("nav.side a.item").forEach(function (a) { items[a.getAttribute("href").slice(1)] = a; });
+  function mark() {
+    var now = heads[0];
+    heads.forEach(function (h) { if (h.getBoundingClientRect().top < 140) now = h; });
+    for (var k in items) items[k].classList.toggle("active", now && k === now.id);
+  }
+  addEventListener("scroll", mark, { passive: true }); mark();
+})();
+</script>
 </body>
 </html>
