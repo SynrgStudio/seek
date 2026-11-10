@@ -205,11 +205,23 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         uint32_t n;
         if (!indexed && towupper(scope[0]) == v->letter && FindNode(*v, scope, n)) indexed = true;
     }
+    // A part of the path asked for ("docs/"): looked at for every name that matches, not only for the best ones kept.
+    // Those are the shallowest, and what is asked for is often deep: "docs/ .png" used to find nothing.
+    auto inParts = [&](const std::wstring& key) {
+        for (const std::wstring& p : q.pathParts)
+            if (key.find(p) == std::wstring::npos) return false;
+        return true;
+    };
+    auto partsOf = [&](const Cand& c) {  // of a name in the index or made since; a walk looks at its own
+        if (q.pathParts.empty() || !indexed) return true;
+        if (c.vol != UINT32_MAX) return inParts(Key(NodePath(*vols[c.vol], c.node)));
+        return inParts(added[c.node].key.empty() ? Key(added[c.node].path) : added[c.node].key);
+    };
     // letters scattered along a long name match by chance: counted apart, and shown only when nothing better is there
     std::atomic<uint64_t> scattered{0};
     auto realMatch = [&](const wchar_t* name, size_t n, bool dir, uint8_t depth, Cand& c, std::wstring& b) {
         int sc;
-        if (!NameMatch(q, name, n, dir, sc, b, &c.rank)) return false;
+        if (!NameMatch(q, name, n, dir, sc, b, &c.rank) || !partsOf(c)) return false;
         c.key = sc * 8 - std::min<int>(depth, 40);
         if (c.key <= kNearFloor) scattered.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -221,7 +233,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         int sc;
         if (!NameMatch(shape, name, n, dir, sc, b)) return false;
         const int p = NearMatch(name, n, close);
-        if (!p) return false;
+        if (!p || !partsOf(c)) return false;
         c.percent = static_cast<int16_t>(p);
         c.key = NearScore(p, n);
         return true;
@@ -236,7 +248,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             Cand c{0, UINT32_MAX, static_cast<uint32_t>(walked.size()), 0, 0};
             const uint8_t depth = static_cast<uint8_t>(std::min<size_t>(250, std::count(p.begin(), p.end(), L'\\')));
-            if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf)) {
+            if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf) && inParts(k)) {
                 ++s.total;
                 walked.push_back({p, dir, k});
                 s.best.push_back(c);
