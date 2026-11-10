@@ -3,6 +3,7 @@
 ## 0.4.0
 
 - **The folders in memory come back after a restart.** The background process remembers which folders it kept for `grep` (their paths, in `kept.txt`) and reads them again when it starts, so the first search after an update or a restart is answered from memory. Before, it walked the drive again: on a folder of 10,800 files that had left the system's cache, 6 s and a partial answer, cut by the time budget.
+- **`grep` runs a regex of plain texts joined by `|` as text,** without the regex engine: `foo|bar baz|x\.y`, which is how agents write most of theirs (93 of the 130 regexes with `|` in two days of calls). Files with none of the texts are passed over without being decoded, like for a literal pattern. The 93 over 10,800 files read from the drive: 183 s before, 19 s now; `ERROR|FATAL` in a log of 177 MB, 3.1 s before, 0.5 s now. And these find matches past the first 4,096 characters of a very long line, which the regex engine doesn't look at.
 
 ## 0.3.7
 

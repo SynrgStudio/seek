@@ -211,10 +211,14 @@ enum class ReadOutcome { Ok, Binary, Big, Fail, NoMatch };
 // A first look at a file's raw bytes, for a literal pattern in plain ASCII. Those characters are the same bytes in
 // UTF-8 and in the system code page, so a file whose bytes don't hold the pattern can't match, and it is passed over
 // without being decoded. That is most files, and decoding was most of the time.
+// The same goes for a regex that is only plain texts joined by |: a file with none of them can't match.
 struct BytePre {
     bool on = false, icase = false;
-    std::string pat;  // lowercase when icase
-    size_t anchor = 0;  // its rarest character: the one looked for first
+    struct Alt {
+        std::string pat;  // lowercase when icase
+        size_t anchor = 0;  // its rarest character: the one looked for first
+    };
+    std::vector<Alt> alts;  // the pattern; or each of the texts of such a regex
 };
 
 // How common a character is in text and code; the rarest one of a pattern has the fewest places to check around it.
@@ -228,39 +232,47 @@ int Commonness(char c, bool icase) {
     return 15;
 }
 
-BytePre MakeBytePre(const std::wstring& pattern, bool regex, bool icase) {
+// texts: the literal pattern, or the plain texts of a regex (none for any other regex: no first look, then).
+BytePre MakeBytePre(const std::vector<std::wstring>& texts, bool icase) {
     BytePre p;
-    if (regex || pattern.empty()) return p;
-    for (const wchar_t c : pattern)
-        if (c == 0 || c >= 0x80) return p;
+    if (texts.empty()) return p;
+    for (const std::wstring& t : texts) {
+        if (t.empty()) return p;
+        for (const wchar_t c : t)
+            if (c == 0 || c >= 0x80) return p;
+    }
     p.on = true;
     p.icase = icase;
-    for (const wchar_t c : pattern) p.pat += static_cast<char>(icase && c >= L'A' && c <= L'Z' ? c + 32 : c);
-    for (size_t i = 1; i < p.pat.size(); ++i)
-        if (Commonness(p.pat[i], icase) < Commonness(p.pat[p.anchor], icase)) p.anchor = i;
+    for (const std::wstring& t : texts) {
+        BytePre::Alt a;
+        for (const wchar_t c : t) a.pat += static_cast<char>(icase && c >= L'A' && c <= L'Z' ? c + 32 : c);
+        for (size_t i = 1; i < a.pat.size(); ++i)
+            if (Commonness(a.pat[i], icase) < Commonness(a.pat[a.anchor], icase)) a.anchor = i;
+        p.alts.push_back(std::move(a));
+    }
     return p;
 }
 
-// Are the pattern's bytes in these? Its rarest character is looked for with memchr, and the rest compared around it.
-bool BytesMayMatch(const BytePre& p, const char* h, size_t n) {
-    const size_t m = p.pat.size(), a = p.anchor;
+// Are a text's bytes in these? Its rarest character is looked for with memchr, and the rest compared around it.
+bool AltMayMatch(const BytePre::Alt& alt, bool icase, const char* h, size_t n) {
+    const size_t m = alt.pat.size(), a = alt.anchor;
     if (n < m) return false;
     const char* first = h + a;            // the first place the anchor can be
     const char* last = h + (n - m) + a;   // and the last
     auto at = [&](const char* f) {
         const char* s = f - a;
-        if (!p.icase) return memcmp(s, p.pat.data(), m) == 0;
+        if (!icase) return memcmp(s, alt.pat.data(), m) == 0;
         for (size_t i = 0; i < m; ++i) {
             char c = s[i];
             if (static_cast<unsigned char>(c - 'A') < 26) c |= 0x20;
-            if (c != p.pat[i]) return false;
+            if (c != alt.pat[i]) return false;
         }
         return true;
     };
     auto next = [&](const char* from, char c) -> const char* {
         return from > last ? nullptr : static_cast<const char*>(memchr(from, c, static_cast<size_t>(last - from) + 1));
     };
-    const char lo = p.pat[a], up = p.icase && lo >= 'a' && lo <= 'z' ? static_cast<char>(lo - 32) : lo;
+    const char lo = alt.pat[a], up = icase && lo >= 'a' && lo <= 'z' ? static_cast<char>(lo - 32) : lo;
     if (lo == up) {
         for (const char* f = next(first, lo); f; f = next(f + 1, lo))
             if (at(f)) return true;
@@ -274,6 +286,13 @@ bool BytesMayMatch(const BytePre& p, const char* h, size_t n) {
         if (low) fl = next(f + 1, lo);
         else fu = next(f + 1, up);
     }
+    return false;
+}
+
+// Can these bytes hold the pattern: are any of its texts in them?
+bool BytesMayMatch(const BytePre& p, const char* h, size_t n) {
+    for (const BytePre::Alt& alt : p.alts)
+        if (AltMayMatch(alt, p.icase, h, n)) return true;
     return false;
 }
 
@@ -627,6 +646,7 @@ struct Matcher {
     std::wstring pat;  // lowercase when ignoring case
     bool icase = true, regex = false;
     std::wregex re;
+    std::vector<std::wstring> alts;  // a regex that is only plain texts joined by |: those, looked for as text (lowercase when ignoring case)
     bool without = false;  // and lines with this are left out
     std::wstring withoutPat;
     std::wregex withoutRe;
@@ -646,17 +666,23 @@ bool LeftOut(const Matcher& m, const std::wstring& text, const std::wstring& hay
 // outside that range (a file read in parts keeps the lines around each part at hand).
 void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int perFile, const Around& context, size_t from = 0,
                 size_t to = std::wstring::npos, int firstLine = 1) {
-    if (!m.regex) {
+    if (!m.regex || !m.alts.empty()) {  // text: the pattern, or the plain texts of a regex, without the regex engine
         std::wstring lowered;
         if (m.icase) {
             lowered = text;
             if (!lowered.empty()) CharLowerBuffW(lowered.data(), static_cast<DWORD>(lowered.size()));
         }
         const std::wstring& hay = m.icase ? lowered : text;
-        size_t pos = from, counted = 0;
+        const std::wstring* pats = m.alts.empty() ? &m.pat : m.alts.data();
+        const size_t np = m.alts.empty() ? 1 : m.alts.size();
+        std::vector<size_t> next(np);  // where each text is next
+        for (size_t k = 0; k < np; ++k) next[k] = hay.find(pats[k], from);
+        size_t counted = 0;
         int line = firstLine;
         std::vector<std::pair<size_t, size_t>> at;
-        while ((pos = hay.find(m.pat, pos)) != std::wstring::npos && pos < to) {
+        for (;;) {
+            const size_t pos = *std::min_element(next.begin(), next.end());  // the first of them
+            if (pos == std::wstring::npos || pos >= to) break;
             line += static_cast<int>(std::count(text.begin() + counted, text.begin() + pos, L'\n'));
             counted = pos;
             size_t eol = text.find(L'\n', pos);  // one per line
@@ -664,15 +690,18 @@ void FindInText(const Matcher& m, const std::wstring& text, FileHits& fh, int pe
             const size_t sol = pos == 0 ? 0 : text.rfind(L'\n', pos - 1) + 1;  // the line's start (npos + 1 is 0)
             if (!LeftOut(m, text, hay, sol, eol)) {
                 ++fh.matches;
-                if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line it is
+                if (static_cast<int>(fh.lines.size()) < perFile) {  // shown: where else in the line they are
                     at.clear();
-                    for (size_t p = pos; p != std::wstring::npos && p < eol && at.size() < 1000; p = hay.find(m.pat, p + m.pat.size()))
-                        at.push_back({p, m.pat.size()});
+                    for (size_t k = 0; k < np; ++k)
+                        for (size_t p = next[k]; p != std::wstring::npos && p < eol && at.size() < 1000; p = hay.find(pats[k], p + pats[k].size()))
+                            at.push_back({p, pats[k].size()});
+                    std::sort(at.begin(), at.end());
                     AddHit(fh, text, at, line, context);
                 }
             }
             if (eol >= text.size()) break;
-            pos = eol;
+            for (size_t k = 0; k < np; ++k)
+                if (next[k] < eol) next[k] = hay.find(pats[k], eol);
         }
         return;
     }
@@ -979,6 +1008,30 @@ std::wstring RegexHint(const std::wstring& p) {
     return L"";
 }
 
+// A regex that is only plain texts joined by |, like "foo|bar baz|x\.y", which is how agents write most of theirs:
+// those texts, to look for them as text instead of through the regex engine, which is many times slower. Nothing
+// when the regex is anything more.
+std::vector<std::wstring> PlainAlternatives(const std::wstring& p) {
+    std::vector<std::wstring> out(1);
+    for (size_t i = 0; i < p.size(); ++i) {
+        const wchar_t c = p[i];
+        if (c == L'|') {
+            out.emplace_back();
+        } else if (c == L'\\') {
+            if (i + 1 >= p.size() || iswalnum(p[i + 1])) return {};  // \d, \b, \1: a class, an anchor, a reference
+            out.back() += p[++i];  // an escaped sign is itself
+        } else if (wcschr(L"^$.*+?()[]{}", c)) {
+            return {};
+        } else {
+            out.back() += c;
+        }
+    }
+    if (out.size() > 16) return {};
+    for (const std::wstring& t : out)
+        if (t.empty()) return {};  // "a|" matches every line
+    return out;
+}
+
 GrepResult RunGrep(const GrepQuery& q) {
     GrepResult res;
     Matcher m;
@@ -988,6 +1041,8 @@ GrepResult RunGrep(const GrepQuery& q) {
     const std::wstring without = q.regex ? TakeInlineFlags(q.without, withoutIcase) : q.without;
     m.icase = icase;
     m.pat = icase && !q.regex ? Lower(pattern) : pattern;
+    const std::vector<std::wstring> plain = q.regex ? PlainAlternatives(pattern) : std::vector<std::wstring>{};
+    for (const std::wstring& t : plain) m.alts.push_back(icase ? Lower(t) : t);
     auto flags = [](bool ic) { return ic ? std::regex::ECMAScript | std::regex::icase | std::regex::optimize : std::regex::ECMAScript | std::regex::optimize; };
     if (q.regex) {
         try {
@@ -1009,7 +1064,7 @@ GrepResult RunGrep(const GrepQuery& q) {
             }
         }
     }
-    const BytePre pre = MakeBytePre(q.pattern, q.regex, q.ignoreCase);
+    const BytePre pre = MakeBytePre(q.regex ? plain : std::vector<std::wstring>{pattern}, icase);
     if (auto kept = CachedGrep(q, m, pre)) return std::move(*kept);
     const uint64_t deadline = GetTickCount64() + q.budgetMs;
     std::mutex fm;

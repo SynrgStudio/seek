@@ -285,7 +285,15 @@ code, out = cli("grep", {"pattern": "def target_rb", "path": B + "\\code.rb", "c
 check("grep: block closed by end (Ruby)", numbered(out) == [("1", ":"), ("2", "-"), ("3", "-")], out)
 code, out = cli("grep", {"pattern": "fn huge_block", "path": B + "\\huge.rs", "context": 0, "block": True})
 check("grep: a block over 300 lines says it goes on", len(numbered(out)) == 301 and "(the block goes on past 300 lines)" in out, out)
-for args in ({"pattern": "needle7"}, {"pattern": r"needle\d", "regex": True}):
+code, out = cli("grep", {"pattern": "Engine|RenderFrame", "path": S + "\\repo\\src", "regex": True, "context": 0, "glob": "engine.*"})
+check("grep: a regex of plain texts joined by | (looked for as text)", "4 matching lines in 2 files" in out and "1: int Engine() {" in out
+      and "5: void RenderFrame() {}" in out and "2: void RenderFrame();" in out, out)
+code, out = cli("grep", {"pattern": r"(?i)ENGINE\(\)|renderframe\(\);", "path": S + "\\repo\\src", "regex": True, "context": 0, "glob": "engine.*"})
+check("grep: the same with escaped signs, ignoring case", "3 matching lines in 2 files" in out and "1: int Engine() {" in out and "2: void RenderFrame();" in out
+      and "5: void RenderFrame() {}" not in out, out)
+code, out = cli("grep", {"pattern": "Engine|RenderFrame", "path": S + "\\repo\\src", "regex": True, "without": r"^void\b", "context": 0, "glob": "engine.*"})
+check("grep: the same with a regex in without", "2 matching lines in 2 files" in out and "RenderFrame" not in out.split("\n", 1)[1], out)
+for args in ({"pattern": "needle7"}, {"pattern": r"needle\d", "regex": True}, {"pattern": "needle7|zzqq", "regex": True}):
     code, out = cli("grep", dict(args, path=S + "\\ctx\\long.txt", context=0))
     check("grep: a long line shows a window for each match, then counts the rest" + (" (regex)" if "regex" in args else ""),
           [m.group(1) for m in re.finditer(r"col (\d+): …a?b*needle7", out)] == ["371", "641", "911"] and "(2 more matches in this line)" in out
