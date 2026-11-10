@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- **A file made and then changed is still found after Seek restarts.** What was created since the index was taken is kept between runs in `activity.txt`, but that file held only each path's last change, and the newest 40,000: a file created and saved again was written down as changed, and after a restart (an update, a reboot) `find` no longer knew it until the next index, even by its exact name. On a busy day a new folder could drop off the end the same way. Now what the index lacks, and what it still has that is gone, are written down whole.
+
 ## 0.4.1
 
 - **Rows for a program's own list.** The background process answers a new request on its pipe, `__rows`: a `find` whose answer is a count and one line per result (`D` or `F`, a tab, the path), up to as many as asked, for a program that lists the results itself. Seek's window, a search box for people in a repository of its own, is the first to use it. Nothing is read from the drive for those rows, the calls aren't written to the log or counted in `--stats`, and a program of any version is served.
