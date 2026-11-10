@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+
+- **`grep` takes a pattern like `var\("NAME` as a regex when the text itself isn't there.** A literal pattern with regex signs that finds nothing is tried as a regex, but a backslash right after a letter was read as a path's (`src\bin`), so `std::env::var\("ABC` answered 0 matches without saying why. A backslash before a bracket or a quantifier (`\(`, `\[`, `\{`, `\|`, `\?`, `\*`, `\+` and the closing ones) is now a sign wherever it is, and the answer says it searched as a regex.
+
 ## 0.4.2
 
 - **A file made and then changed is still found after Seek restarts.** What was created since the index was taken is kept between runs in `activity.txt`, but that file held only each path's last change, and the newest 40,000: a file created and saved again was written down as changed, and after a restart (an update, a reboot) `find` no longer knew it until the next index, even by its exact name. On a busy day a new folder could drop off the end the same way. Now what the index lacks, and what it still has that is gone, are written down whole.
