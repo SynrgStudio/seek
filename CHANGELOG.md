@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- **`find` answers about three times sooner.** On a PC with 4.9 million names, a search by name went from 100–150 ms to 40–50 ms, and one with a wildcard (`*.blend`) from about 400 ms to 100 ms. Seek's window searches at every letter typed, and the wait showed. What changed: each thread reads names that are next to each other in memory instead of one in eight; scoring a match no longer asks for memory, nor twice whether the name is a program; turning the best matches into paths and ranking them by what the user did lately runs on several threads; the list of what was created since the index is made once, not at every search; and wildcards compare letters without a call for each.
+- **The same search always lists equal scores in the same order**: the index's. Before, which thread had read a name could decide it.
+
 ## 0.4.3
 
 - **`grep` takes a pattern like `var\("NAME` as a regex when the text itself isn't there.** A literal pattern with regex signs that finds nothing is tried as a regex, but a backslash right after a letter was read as a path's (`src\bin`), so `std::env::var\("ABC` answered 0 matches without saying why. A backslash before a bracket or a quantifier (`\(`, `\[`, `\{`, `\|`, `\?`, `\*`, `\+` and the closing ones) is now a sign wherever it is, and the answer says it searched as a regex.
