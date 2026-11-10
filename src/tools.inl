@@ -112,6 +112,21 @@ struct Found {
 // asked for with offset come from one order and none is skipped or repeated; paging goes that far.
 constexpr size_t kRanked = 2000;
 
+// fn(i) for every i under n, on several threads when there are enough to be worth starting them.
+template <class F>
+void ForEach(size_t n, F fn) {
+    const unsigned nth = n < 400 ? 1u : std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t from; (from = next.fetch_add(64, std::memory_order_relaxed)) < n;)
+            for (size_t i = from; i < std::min(n, from + 64); ++i) fn(i);
+    };
+    std::vector<std::thread> th;
+    for (unsigned t = 1; t < nth; ++t) th.emplace_back(work);
+    work();
+    for (auto& x : th) x.join();
+}
+
 // rows: for a program that lists the results itself (Seek's window): that many of the best, as "D" or "F", a tab and
 // the path on each line, after a line "#rows", how many match, 1 when that count is exact, and "real", "near" (close
 // names, a typo) or "scattered". Nothing is read from the drive for them: the program reads what it shows.
@@ -139,22 +154,27 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     WaitCatchUp(10000);
     const std::wstring building = scope.empty() ? IndexingNote() : L"";
     LoadUsage();
-    std::vector<AddedItem> added;  // what was created since the index was taken: below the folder, when there is one
-    {
+    // what was created since the index was taken: all of it, or what is below the folder
+    std::shared_ptr<const std::vector<AddedItem>> everything;
+    std::vector<AddedItem> below;
+    if (scope.empty()) {
+        everything = AddedList();
+    } else {
         const std::wstring scopeKey = Key(scope);
         std::lock_guard lk(g_actM);
-        added.reserve(g_added.size());
         for (const auto& [k, x] : g_added)
-            if (scope.empty() || IsUnder(k, scopeKey)) added.push_back(x);
+            if (IsUnder(k, scopeKey)) below.push_back(x);
     }
+    const std::vector<AddedItem>& added = everything ? *everything : below;
     const auto vols = Volumes();
     const size_t keep = rows ? rows : summary ? 20000 : kRanked;
     std::wstring buf;
     auto toFound = [&](const ScanOut& s) {
-        std::vector<Found> out;
-        std::unordered_set<std::wstring> seen;
-        for (const Cand& c : s.best) {
-            Found f;
+        std::vector<Found> all(s.best.size());
+        std::vector<char> stays(s.best.size());
+        ForEach(s.best.size(), [&](size_t i) {
+            const Cand& c = s.best[i];
+            Found& f = all[i];
             if (c.vol == UINT32_MAX) {
                 f.path = added[c.node].path;
                 f.dir = added[c.node].dir;
@@ -163,15 +183,20 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
                 f.dir = vols[c.vol]->node[c.node].dir != 0;
             }
             f.key = Key(f.path);
-            if (!seen.insert(f.key).second || Private(f.key) || Removed(f.key)) continue;
-            bool parts = true;
-            for (const std::wstring& p : q.pathParts) parts = parts && f.key.find(p) != std::wstring::npos;
-            if (!parts) continue;
+            bool ok = !Private(f.key) && !Removed(f.key);
+            for (const std::wstring& p : q.pathParts) ok = ok && f.key.find(p) != std::wstring::npos;
             f.key0 = c.key;
             f.rank = c.rank;
             f.percent = c.percent;
-            out.push_back(std::move(f));
-        }
+            stays[i] = ok;
+        });
+        std::vector<Found> out;
+        std::unordered_set<std::wstring_view> seen;  // the keys stay where they are until the last one was looked at
+        std::vector<size_t> kept;
+        for (size_t i = 0; i < all.size(); ++i)
+            if (seen.insert(all[i].key).second && stays[i]) kept.push_back(i);
+        out.reserve(kept.size());
+        for (size_t i : kept) out.push_back(std::move(all[i]));
         return out;
     };
     // is the folder in the index? (one created after it was taken, or on a drive it doesn't cover, is walked instead)
@@ -184,8 +209,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     std::atomic<uint64_t> scattered{0};
     auto realMatch = [&](const wchar_t* name, size_t n, bool dir, uint8_t depth, Cand& c, std::wstring& b) {
         int sc;
-        if (!NameMatch(q, name, n, dir, sc, b)) return false;
-        c.rank = q.words.size() == 1 ? NameRank(name, n, q.words[0]) : 0;
+        if (!NameMatch(q, name, n, dir, sc, b, &c.rank)) return false;
         c.key = sc * 8 - std::min<int>(depth, 40);
         if (c.key <= kNearFloor) scattered.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -221,7 +245,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         });
         std::sort(s.best.begin(), s.best.end(), [](const Cand& x, const Cand& y) { return x.key > y.key; });
         if (s.best.size() > keep) s.best.resize(keep);
-        added = std::move(walked);  // toFound reads the paths from here
+        below = std::move(walked);  // toFound reads the paths from here
         return s;
     };
     ScanOut real = indexed ? ScanIndex(vols, added, keep, scope, realMatch) : walkScan(realMatch);
@@ -323,13 +347,14 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     const std::wstring nearKey = Key(nearDir);
     const std::wstring scopeKey = Key(scope);
     const std::wstring typed = Lower(query);  // as Jolt keeps what was typed in Ctrl+P
-    for (Found& f : found) {
+    ForEach(found.size(), [&](size_t at) {
+        Found& f = found[at];
         if (NoiseBelow(f.key, scopeKey)) f.boost -= 2000;  // caches, package stores, AppData: below the user's own files
         if (f.rank >= kExactName) f.why.push_back(f.rank == kExactProgram ? L"program, exact name" : L"exact name");
         else if (f.rank == kProgramName) f.why.push_back(L"program");
         if (f.percent) {
             f.why.push_back(L"close to what was typed: " + std::to_wstring(f.percent) + L"%");
-            continue;
+            return;
         }
         if (const int64_t t = LastActivity(f.key)) {
             const int64_t age = now - t;
@@ -358,7 +383,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
                 if (shared > 1) f.boost += static_cast<int>(150 * (shared - 1));
             }
         }
-    }
+    });
     std::stable_sort(found.begin(), found.end(), [](const Found& x, const Found& y) {
         if ((x.percent == 0) != (y.percent == 0)) return x.percent == 0;
         return x.key0 + x.boost > y.key0 + y.boost;

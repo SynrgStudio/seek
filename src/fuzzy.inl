@@ -34,12 +34,14 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
         return true;
     }
     if (m > n) return false;
-    // 1) is it a subsequence? (forward scan, records where it ends)
+    // 1) is it a subsequence? (forward scan, records where it ends) Nearly every name stops here.
     size_t pi = 0, end = 0;
-    for (size_t i = 0; i < n && pi < m; ++i)
-        if (FzLower(text[i]) == FzLower(pat[pi])) {
-            ++pi;
+    wchar_t want = FzLower(pat[0]);
+    for (size_t i = 0; i < n; ++i)
+        if (FzLower(text[i]) == want) {
             end = i;
+            if (++pi == m) break;
+            want = FzLower(pat[pi]);
         }
     if (pi < m) return false;
     // 2) backward scan from the end to shrink the window
@@ -52,8 +54,10 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
         }
     }
     // 3) within the window, pick the best nearby position for each letter (a word boundary if there is one)
-    std::vector<int> p;
-    p.reserve(m);
+    int few[64];  // on the stack: a short query matches millions of names
+    std::vector<int> big;
+    if (m > 64) big.resize(m);
+    int* const p = m > 64 ? big.data() : few;
     size_t i = start;
     for (size_t k = 0; k < m; ++k) {
         size_t best = n;
@@ -67,7 +71,7 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
             if (j > best + 2) break;  // don't stray too far looking for a word boundary
         }
         if (best == n) return false;  // shouldn't happen
-        p.push_back(static_cast<int>(best));
+        p[k] = static_cast<int>(best);
         i = best + 1;
     }
     // 4) score
@@ -81,13 +85,14 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
         if (k > 0) s -= std::min(8, at - p[k - 1] - 1);  // gap
     }
     // exact substring match: big bonus
-    if (p.back() - p.front() + 1 == static_cast<int>(m)) s += 30;
+    const int span = p[m - 1] - p[0] + 1;
+    if (span == static_cast<int>(m)) s += 30;
     s -= static_cast<int>(std::min<size_t>(n, 64) / 8);  // shorter texts first, just barely
     // A word this long isn't an abbreviation: spread over more than one and a half times its length, it matched by
     // chance. With millions of names there are always plenty of those, and they would bury the name that was meant.
-    if (m >= 6 && (p.back() - p.front() + 1) * 2 > static_cast<int>(m) * 3) s += kScattered;
+    if (m >= 6 && span * 2 > static_cast<int>(m) * 3) s += kScattered;
     score = s;
-    if (pos) *pos = std::move(p);
+    if (pos) pos->assign(p, p + m);
     return true;
 }
 
@@ -105,8 +110,12 @@ int NameRank(const wchar_t* name, size_t n, const std::wstring& pat) {
             break;
         }
     bool program = false;
-    for (const wchar_t* ext : {L".exe", L".lnk", L".bat", L".appref-ms"})  // not .cmd: those are the shims in node_modules
-        program |= n - stem == wcslen(ext) && _wcsnicmp(name + stem, ext, n - stem) == 0;
+    if (n - stem == 4 || n - stem == 10)
+        for (const wchar_t* ext : {L".exe", L".lnk", L".bat", L".appref-ms"}) {  // not .cmd: those are the shims in node_modules
+            size_t k = 0;
+            while (ext[k] && stem + k < n && FzLower(name[stem + k]) == ext[k]) ++k;
+            program |= !ext[k] && stem + k == n;
+        }
     auto sameAt = [&](size_t at) {
         for (size_t k = 0; k < m; ++k)
             if (FzLower(name[at + k]) != FzLower(pat[k])) return false;

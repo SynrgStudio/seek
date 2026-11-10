@@ -19,10 +19,11 @@ struct Act {
     uint8_t kind = 0;
 };
 
-std::mutex g_actM;
+std::shared_mutex g_actM;  // shared by the ones that only read: find asks them for thousands of results, on several threads
 std::unordered_map<std::wstring, Act> g_act;           // by key
 std::unordered_map<std::wstring, AddedItem> g_added;   // created after the indexes were taken, by key
 std::unordered_map<std::wstring, int64_t> g_removed;   // deleted since: key, and when
+std::shared_ptr<const std::vector<AddedItem>> g_addedList;  // g_added as a list, made when find asks; dropped when g_added changes
 int64_t g_actSince = 0;                                // since when changes have been watched
 std::atomic<bool> g_watching{false};
 constexpr size_t kActMax = 120000, kActKeep = 80000;
@@ -55,6 +56,7 @@ void AddedWalk(const std::wstring& root) {
         return dir && got.size() < 50000 && !JunkDirs().count(Lower(fd.cFileName));
     });
     std::lock_guard lk(g_actM);
+    g_addedList.reset();
     for (AddedItem& a : got) {
         g_removed.erase(a.key);
         g_added[a.key] = std::move(a);
@@ -83,6 +85,7 @@ bool ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
             const bool sinceIndex = it != g_added.end(), folder = sinceIndex && it->second.dir;
             if (sinceIndex) {
                 g_added.erase(it);
+                g_addedList.reset();
                 g_act.erase(key);
             } else {
                 g_act[key] = {path, t, kind};
@@ -97,6 +100,7 @@ bool ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
             if (kind == kCreated || kind == kRenamed) {
                 fresh = !g_added.count(key);
                 g_added[key] = {path, dir, key, t};
+                g_addedList.reset();
                 PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
             }
         }
@@ -113,6 +117,7 @@ void ActIndexRenewed(wchar_t letter, int64_t stamp) {
     const int64_t cut = stamp - 15 * kMinute;
     const wchar_t l = static_cast<wchar_t>(towlower(letter));
     std::lock_guard lk(g_actM);
+    g_addedList.reset();
     for (auto it = g_added.begin(); it != g_added.end();) it = it->first[0] == l && it->second.time < cut ? g_added.erase(it) : std::next(it);
     for (auto it = g_removed.begin(); it != g_removed.end();) it = it->first[0] == l && it->second < cut ? g_removed.erase(it) : std::next(it);
 }
@@ -399,6 +404,7 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
             g_act[k] = std::move(x);
         }
     }
+    g_addedList.reset();
     for (AddedItem& a : added)
         if (!g_removed.count(a.key)) g_added.emplace(a.key, std::move(a));
     // as the last run left them, where the drive's index is no newer; the journal says what changed since
@@ -409,9 +415,21 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
     g_actSince = since ? since : NowFt();
 }
 
+// What was created since the indexes were taken, as a list: the same one for every search until something changes.
+std::shared_ptr<const std::vector<AddedItem>> AddedList() {
+    std::lock_guard lk(g_actM);
+    if (!g_addedList) {
+        auto list = std::make_shared<std::vector<AddedItem>>();
+        list->reserve(g_added.size());
+        for (const auto& [k, a] : g_added) list->push_back(a);
+        g_addedList = std::move(list);
+    }
+    return g_addedList;
+}
+
 // When something was last created, changed or renamed here (0 if not seen, or deleted).
 int64_t LastActivity(const std::wstring& key) {
-    std::lock_guard lk(g_actM);
+    std::shared_lock lk(g_actM);
     auto it = g_act.find(key);
     return it != g_act.end() && it->second.kind != kDeleted ? it->second.time : 0;
 }
@@ -419,7 +437,7 @@ int64_t LastActivity(const std::wstring& key) {
 // Gone since the index was taken: the path itself, or a folder above it (the index still lists what a deleted or
 // renamed folder held; the watchers only saw the folder go).
 bool Removed(const std::wstring& key) {
-    std::lock_guard lk(g_actM);
+    std::shared_lock lk(g_actM);
     if (g_removed.empty()) return false;
     if (g_removed.count(key)) return true;
     for (size_t at = key.rfind(L'\\'); at != std::wstring::npos && at > 2; at = key.rfind(L'\\', at - 1))
@@ -436,7 +454,7 @@ struct Use {
     int64_t last = 0;  // file time
     bool file = false;  // a file opened from Jolt, not a folder
 };
-std::mutex g_useM;
+std::shared_mutex g_useM;  // shared by the ones that only read, as g_actM
 std::vector<Use> g_use;
 std::unordered_map<std::wstring, double> g_useFiles;  // the files' heat, by key
 std::unordered_map<std::wstring, std::unordered_map<std::wstring, double>> g_picks;  // typed (lowercase) -> key -> times
@@ -522,7 +540,7 @@ void LoadUsage() {
 // The heat of the most used Jolt folder that holds this path closely (it, or up to two levels inside), and that
 // folder. Only close: a drive or a whole profile is used a lot, and that says nothing about what is deep inside.
 double JoltHeat(const std::wstring& key, std::wstring* folder = nullptr) {
-    std::lock_guard lk(g_useM);
+    std::shared_lock lk(g_useM);
     double best = 0;
     for (const Use& u : g_use) {
         if (u.file || u.heat <= best || u.key.size() <= 3 || !IsUnder(key, u.key)) continue;
@@ -535,14 +553,14 @@ double JoltHeat(const std::wstring& key, std::wstring* folder = nullptr) {
 
 // The heat of this file, opened from Jolt; 0 when it wasn't.
 double JoltFileHeat(const std::wstring& key) {
-    std::lock_guard lk(g_useM);
+    std::shared_lock lk(g_useM);
     const auto it = g_useFiles.find(key);
     return it == g_useFiles.end() ? 0 : it->second;
 }
 
 // How often this path was chosen in Jolt's Ctrl+P for this very text (lowercase); 0 when it wasn't.
 double JoltPicked(const std::wstring& typed, const std::wstring& key) {
-    std::lock_guard lk(g_useM);
+    std::shared_lock lk(g_useM);
     const auto t = g_picks.find(typed);
     if (t == g_picks.end()) return 0;
     const auto k = t->second.find(key);

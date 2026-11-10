@@ -483,6 +483,9 @@ std::vector<std::wstring> ExpandBraces(const std::wstring& g) {
     return out;
 }
 
+// A letter in lowercase, without a call for the plain ones: a search with a wildcard asks for every letter of every name.
+inline wchar_t GlobLower(wchar_t c) { return c < 128 ? (c >= L'A' && c <= L'Z' ? static_cast<wchar_t>(c + 32) : c) : static_cast<wchar_t>(towlower(c)); }
+
 // * any run without a separator, ** any run, ? one character, [abc] [a-z] [!x]; case-insensitive, '\' separates.
 bool GlobMatch(const wchar_t* p, const wchar_t* s) {
     while (*p) {
@@ -490,8 +493,10 @@ bool GlobMatch(const wchar_t* p, const wchar_t* s) {
             const bool deep = p[1] == L'*';
             const wchar_t* rest = p + (deep ? 2 : 1);
             if (deep && *rest == L'\\' && GlobMatch(rest + 1, s)) return true;  // "**\" also matches no folder at all
+            // a letter after the star: only where the text has it is there anything to try ("*.blend": at each dot)
+            const wchar_t next = *rest && *rest != L'*' && *rest != L'?' && *rest != L'[' ? static_cast<wchar_t>(GlobLower(*rest)) : 0;
             for (const wchar_t* t = s;; ++t) {
-                if (GlobMatch(rest, t)) return true;
+                if ((!next || *t == *rest || GlobLower(*t) == next) && GlobMatch(rest, t)) return true;
                 if (!*t || (!deep && *t == L'\\')) return false;
             }
         }
@@ -503,11 +508,11 @@ bool GlobMatch(const wchar_t* p, const wchar_t* s) {
             const bool neg = *q == L'!' || *q == L'^';
             if (neg) ++q;
             bool hit = false;
-            const wchar_t c = static_cast<wchar_t>(towlower(*s));
+            const wchar_t c = static_cast<wchar_t>(GlobLower(*s));
             while (*q && *q != L']') {
-                wchar_t a = static_cast<wchar_t>(towlower(*q)), b = a;
+                wchar_t a = static_cast<wchar_t>(GlobLower(*q)), b = a;
                 if (q[1] == L'-' && q[2] && q[2] != L']') {
-                    b = static_cast<wchar_t>(towlower(q[2]));
+                    b = static_cast<wchar_t>(GlobLower(q[2]));
                     q += 2;
                 }
                 if (c >= a && c <= b) hit = true;
@@ -515,7 +520,7 @@ bool GlobMatch(const wchar_t* p, const wchar_t* s) {
             }
             if (!*q || hit == neg) return false;
             p = q;
-        } else if (towlower(*p) != towlower(*s)) {
+        } else if (*p != *s && GlobLower(*p) != GlobLower(*s)) {
             return false;
         }
         ++p;
@@ -525,7 +530,7 @@ bool GlobMatch(const wchar_t* p, const wchar_t* s) {
 }
 
 // Does a name pass the query? score: how well (FuzzyMatch plus exact names and programs).
-bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int& score, std::wstring& lowerBuf) {
+bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int& score, std::wstring& lowerBuf, int* rank = nullptr) {
     if ((q.kind == 1 && !dir) || (q.kind == 2 && dir)) return false;
     if (!q.exts.empty()) {
         if (dir) return false;
@@ -542,7 +547,15 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
     }
     if (!q.notWords.empty() || !q.globs.empty() || !q.phrases.empty()) {
         lowerBuf.assign(name, n);
-        CharLowerBuffW(lowerBuf.data(), static_cast<DWORD>(n));
+        bool plain = true;  // nearly every name: no call needed to lower it
+        for (wchar_t& ch : lowerBuf) {
+            if (ch >= 128) {
+                plain = false;
+                break;
+            }
+            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch + 32);
+        }
+        if (!plain) CharLowerBuffW(lowerBuf.data(), static_cast<DWORD>(n));
         for (const std::wstring& p : q.phrases)
             if (!HasPhrase(lowerBuf, p)) return false;
         for (const std::wstring& w : q.notWords)
@@ -553,7 +566,9 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
             if (!ok) return false;
         }
     }
-    if (q.words.size() == 1) score += NameRank(name, n, q.words[0]);
+    const int r = q.words.size() == 1 ? NameRank(name, n, q.words[0]) : 0;
+    score += r;
+    if (rank) *rank = r;
     return true;
 }
 
@@ -615,35 +630,52 @@ ScanOut ScanIndex(const std::vector<std::shared_ptr<const Volume>>& vols, const 
             scopes[i] = {false, UINT32_MAX, 0};
         }
     }
-    const unsigned nth = work < 100000 ? 1u : std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
+    const unsigned nth = work < 100000 ? 1u : std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
     std::vector<std::vector<Cand>> part(nth);
     std::vector<uint64_t> totals(nth, 0);
-    auto worse = [](const Cand& a, const Cand& b) { return a.key > b.key; };  // min-heap on key
+    // By score, and the index's order among equals: which thread read a name mustn't change what a search answers.
+    auto better = [](const Cand& a, const Cand& b) { return a.key != b.key ? a.key > b.key : a.vol != b.vol ? a.vol < b.vol : a.node < b.node; };
     std::vector<std::thread> th;
+    // The names go out in runs, and each thread takes the next one: it reads names that are next to each other in
+    // memory, which is most of what a scan costs.
+    struct Run {
+        uint32_t vol;
+        size_t from, to;
+    };
+    std::vector<Run> runs;
+    for (uint32_t vi = 0; vi < vols.size(); ++vi) {
+        const Scope& sc = scopes[vi];
+        if (!sc.any && sc.node == UINT32_MAX) continue;
+        const size_t n = sc.any ? vols[vi]->count : below[vi].size();
+        for (size_t from = sc.any ? 1 : 0; from < n; from += 16384) runs.push_back({vi, from, std::min(n, from + 16384)});
+    }
+    std::atomic<size_t> nextRun{0};
     auto scan = [&](unsigned t) {
-            auto& heap = part[t];
+            std::vector<Cand> heap;
+            uint64_t total = 0;
             std::wstring buf;
-            for (uint32_t vi = 0; vi < vols.size(); ++vi) {
-                const Volume& v = *vols[vi];
-                const Scope& sc = scopes[vi];
-                if (!sc.any && sc.node == UINT32_MAX) continue;
-                const size_t n = sc.any ? v.count : below[vi].size();
-                for (size_t j = (sc.any ? 1 : 0) + t; j < n; j += nth) {
-                    const uint32_t i = sc.any ? static_cast<uint32_t>(j) : below[vi][j];
+            for (size_t r; (r = nextRun.fetch_add(1, std::memory_order_relaxed)) < runs.size();) {
+                const Volume& v = *vols[runs[r].vol];
+                const bool any = scopes[runs[r].vol].any;
+                const std::vector<uint32_t>& under = below[runs[r].vol];
+                for (size_t j = runs[r].from; j < runs[r].to; ++j) {
+                    const uint32_t i = any ? static_cast<uint32_t>(j) : under[j];
                     const IdxNode& nd = v.node[i];
-                    Cand c{0, vi, i, 0, 0};
+                    Cand c{0, runs[r].vol, i, 0, 0};
                     if (!match(v.name + nd.nameOff, nd.nameLen, nd.dir != 0, nd.depth, c, buf)) continue;
-                    ++totals[t];
-                    if (heap.size() < keep) {
+                    ++total;
+                    if (heap.size() < keep) {  // a heap with the worst kept on top
                         heap.push_back(c);
-                        std::push_heap(heap.begin(), heap.end(), worse);
-                    } else if (c.key > heap.front().key) {
-                        std::pop_heap(heap.begin(), heap.end(), worse);
+                        std::push_heap(heap.begin(), heap.end(), better);
+                    } else if (better(c, heap.front())) {
+                        std::pop_heap(heap.begin(), heap.end(), better);
                         heap.back() = c;
-                        std::push_heap(heap.begin(), heap.end(), worse);
+                        std::push_heap(heap.begin(), heap.end(), better);
                     }
                 }
             }
+            part[t] = std::move(heap);
+            totals[t] = total;
     };
     if (nth == 1) scan(0);  // a small folder: not worth starting threads
     else
@@ -666,7 +698,10 @@ ScanOut ScanIndex(const std::vector<std::shared_ptr<const Volume>>& vols, const 
         ++out.total;
         out.best.push_back(c);
     }
-    std::sort(out.best.begin(), out.best.end(), [](const Cand& a, const Cand& b) { return a.key > b.key; });
-    if (out.best.size() > keep) out.best.resize(keep);
+    if (out.best.size() > keep) {
+        std::nth_element(out.best.begin(), out.best.begin() + static_cast<std::ptrdiff_t>(keep), out.best.end(), better);
+        out.best.resize(keep);
+    }
+    std::sort(out.best.begin(), out.best.end(), better);
     return out;
 }
