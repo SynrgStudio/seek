@@ -435,12 +435,15 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
 
 // The first sign of a regex in a pattern, or empty: when the literal text matches nothing, it is tried as one, since
 // an agent that wrote a|b most likely forgot regex: true. A backslash right after a letter or a digit is a path's
-// (src\bin, C:\data, me\.ssh), not a sign.
+// (src\bin, C:\data, me\.ssh), not a sign; before a bracket or a quantifier it is one wherever it is, since no
+// name starts with those in a path anyone types (var\("NAME", items\[0\]).
 std::wstring RegexSign(const std::wstring& p) {
     if (p.find(L'|') != std::wstring::npos) return L"|";
     for (const wchar_t* s : {L".*", L".+"})
         if (p.find(s) != std::wstring::npos) return s;
-    for (const wchar_t* s : {L"\\d", L"\\w", L"\\s", L"\\b", L"\\.", L"\\("})
+    for (const wchar_t* s : {L"\\(", L"\\)", L"\\[", L"\\]", L"\\{", L"\\}", L"\\|", L"\\?", L"\\*", L"\\+"})
+        if (p.find(s) != std::wstring::npos) return s;
+    for (const wchar_t* s : {L"\\d", L"\\w", L"\\s", L"\\b", L"\\."})
         for (size_t at = p.find(s); at != std::wstring::npos; at = p.find(s, at + 1))
             if (at == 0 || !iswalnum(p[at - 1])) return s;
     if (p.size() > 1 && p[0] == L'^') return L"^";
