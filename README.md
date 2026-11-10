@@ -152,7 +152,7 @@ python -I tests\test.py           about 60 checks, in %TEMP%, with a background 
 python -I bench\bench.py          the comparison, against whatever tools it finds
 ```
 
-Releases are built and tested by GitHub Actions from the tagged commit, and published with their SHA-256.
+Releases are built and tested on the maintainer's PC from the tagged commit, and published with their SHA-256. GitHub Actions builds every push and runs the tests there too.
 
 ## Limits
 

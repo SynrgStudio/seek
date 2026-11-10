@@ -1,5 +1,6 @@
-# Builds seek.exe on GitHub's own machines and runs the tests, so every release can be traced back to this
-# repository. A push to main with a new version in src/version.h also creates the tag and publishes the release.
+# Builds seek.exe on GitHub's own machines and runs the tests on every push, on a PC that isn't the maintainer's.
+# Releases aren't made here: they are built, tested and published from the maintainer's PC (see README), and the
+# build of each push is kept as an artifact of its run.
 name: Build
 
 on:
@@ -48,44 +49,3 @@ jobs:
           name: seek
           path: build/seek.exe
           if-no-files-found: error
-
-  release:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      VERSION: ${{ needs.build.outputs.version }}
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: seek
-
-      - name: Publish the release if this version is new
-        run: |
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            echo "v$VERSION is already published"
-            exit 0
-          fi
-          sha256sum seek.exe > SHA256SUMS.txt
-          cat > notes.md <<EOF
-          Install it, and add it to Claude Code and Codex when they are on this PC, from PowerShell:
-
-          \`\`\`powershell
-          irm https://raw.githubusercontent.com/$GH_REPO/main/install.ps1 | iex
-          \`\`\`
-
-          Or download \`seek.exe\`, put it anywhere, and give its full path to your MCP client as a stdio server with no arguments. It isn't signed yet: Windows may warn you the first time.
-
-          Built by GitHub Actions from this release's commit, with the tests passing.
-
-          \`\`\`
-          SHA-256  $(cut -d' ' -f1 SHA256SUMS.txt)  seek.exe
-          \`\`\`
-          EOF
-          sed -i 's/^ *//' notes.md
-          gh release create "v$VERSION" seek.exe SHA256SUMS.txt --target "$GITHUB_SHA" \
-            --title "Seek $VERSION" --notes-file notes.md --generate-notes
