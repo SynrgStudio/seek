@@ -305,9 +305,9 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             return s;
         };
         const auto areas = top(byArea, 10), folders = top(byFolder, 8);
-        out += L"By area:\n" + rows(areas);
+        out += L"By area:\n" + counts(areas);
         if (byArea.size() > areas.size()) out += L"  … and " + Thousands(byArea.size() - areas.size()) + L" more areas\n";
-        out += L"Most in one folder:\n" + rows(folders);
+        out += L"Most in one folder:\n" + counts(folders);
         if (byFolder.size() > folders.size()) out += L"  … " + Thousands(byFolder.size()) + L" folders in all\n";
         out += L"By extension:";
         for (const auto& [c, k] : top(byExt, 12)) out += L"  " + k + L" " + Thousands(c);
