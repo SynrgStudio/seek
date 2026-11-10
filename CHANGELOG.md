@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- **Rows for a program's own list.** The background process answers a new request on its pipe, `__rows`: a `find` whose answer is a count and one line per result (`D` or `F`, a tab, the path), up to as many as asked, for a program that lists the results itself. Seek's window, a search box for people in a repository of its own, is the first to use it. Nothing is read from the drive for those rows, the calls aren't written to the log or counted in `--stats`, and a program of any version is served.
+
 ## 0.4.0
 
 - **The folders in memory come back after a restart.** The background process remembers which folders it kept for `grep` (their paths, in `kept.txt`) and reads them again when it starts, so the first search after an update or a restart is answered from memory. Before, it walked the drive again: on a folder of 10,800 files that had left the system's cache, 6 s and a partial answer, cut by the time budget.
