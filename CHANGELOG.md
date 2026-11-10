@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- **The folders in memory come back after a restart.** The background process remembers which folders it kept for `grep` (their paths, in `kept.txt`) and reads them again when it starts, so the first search after an update or a restart is answered from memory. Before, it walked the drive again: on a folder of 10,800 files that had left the system's cache, 6 s and a partial answer, cut by the time budget.
+
 ## 0.3.7
 
 - **Ready for what Jolt learns next** (Jolt's PR #146): `usage.txt` lines with a fourth column, `file`, are files opened from Jolt or chosen in its Ctrl+P. Such a file ranks higher in `find` ("opened in Jolt"), above the folder heat that applies to the others, and `recent` lists it. And `picks.txt`, what was chosen in Ctrl+P for what was typed: a `find` for the same text puts what was picked first ("picked in Jolt for this"). Lines of three columns are read as before. From a notice by Jolt's thread.

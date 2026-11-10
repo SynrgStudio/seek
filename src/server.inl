@@ -109,6 +109,7 @@ void LoadEverything(bool build) {
     for (wchar_t c : drives)
         if (const int64_t s = stamps[static_cast<size_t>(c - L'A')]) CatchUp(c, s - 15 * kMinute);
     g_catchingUp = false;
+    std::thread(CacheWarm).detach();  // the folders the last run kept in memory for grep: read again
     for (wchar_t c : missing) LoadVolume(c, true);
 }
 
@@ -129,6 +130,12 @@ std::string ToolsLine() {
 }
 
 std::wstring ExePath();
+
+// What is kept between runs, written before this process ends.
+void SaveState() {
+    ActSave();
+    CacheSaveList();
+}
 
 void Serve(HANDLE pipe) {
     std::string req;
@@ -153,14 +160,14 @@ void Serve(HANDLE pipe) {
                 if (!b || !VersionBefore(b->s, SEEK_VERSION)) {
                     WriteFrame(pipe, R"({"restart":true})");
                     FlushFileBuffers(pipe);
-                    ActSave();
+                    SaveState();
                     ExitProcess(0);
                 }
             }
             if (tool && tool->s == "__stop") {
                 WriteFrame(pipe, R"({"text":"stopping"})");
                 FlushFileBuffers(pipe);
-                ActSave();
+                SaveState();
                 ExitProcess(0);
             }
             static const Json empty = [] {
@@ -229,6 +236,7 @@ int DaemonMain() {
         for (int tick = 1;; ++tick) {
             Sleep(60 * 1000);
             CacheExpire();
+            CacheSaveList();
             if (tick % 5 == 0) {
                 ActSave();
                 ActWatchMissing();

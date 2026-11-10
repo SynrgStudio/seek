@@ -143,6 +143,72 @@ void CacheAfterWalk(const GrepQuery& q, uint64_t textBytes) {
     std::thread(CacheBuild, f).detach();
 }
 
+// ---- between runs: which folders were kept, so that a new background process (after an update, a restart) reads
+// them again at its start, instead of leaving the first search of each to walk a drive that may not have them cached.
+// Only their paths are saved; a folder nobody searched for 20 minutes was let go, and isn't read again.
+
+std::vector<std::wstring> g_warmPending;  // still to read at this start; with g_cacheM held
+
+std::wstring KeptFile() { return DataDir() + L"\\kept.txt"; }
+
+void CacheSaveList() {
+    if (!g_watching) return;
+    std::string out = "# Seek: the folders kept in memory for grep, read again at the next start. Rewritten automatically.\n";
+    {
+        std::lock_guard lk(g_cacheM);
+        for (const auto& f : g_folders) out += Utf8(f->root) + "\n";
+        for (const std::wstring& r : g_warmPending) out += Utf8(r) + "\n";
+    }
+    const std::wstring f = KeptFile(), tmp = f + L".tmp";
+    {
+        std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+        o << out;
+    }
+    MoveFileExW(tmp.c_str(), f.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// At the start of the background process, on a thread of its own: reads the folders the last one kept, one at a
+// time. A search of one of them meanwhile waits for it, as it does for any folder being read.
+void CacheWarm() {
+    std::vector<std::wstring> roots;
+    {
+        std::ifstream in(KeptFile(), std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (!line.empty() && line[0] != '#') roots.push_back(Normalize(Wide(line)));
+        }
+    }
+    if (roots.empty() || !CacheBudget() || !g_watching) return;
+    {
+        std::lock_guard lk(g_cacheM);
+        g_warmPending = roots;
+    }
+    for (const std::wstring& root : roots) {
+        const std::wstring key = Key(root);
+        const DWORD at = GetFileAttributesW(LongPath(root).c_str());
+        const bool ok = root.size() >= 3 && root[1] == L':' && GetDriveTypeW(root.substr(0, 3).c_str()) == DRIVE_FIXED && at != INVALID_FILE_ATTRIBUTES &&
+                        (at & FILE_ATTRIBUTE_DIRECTORY) && !Private(key);
+        std::shared_ptr<KeptFolder> f;
+        {
+            std::unique_lock lk(g_cacheM);
+            g_cacheCv.wait(lk, [] { return !g_building; });
+            g_warmPending.erase(std::remove(g_warmPending.begin(), g_warmPending.end(), root), g_warmPending.end());
+            bool skip = !ok;
+            for (const auto& x : g_folders) skip = skip || key == x->rootKey || IsUnder(key, x->rootKey);  // a search got there first
+            if (skip) continue;
+            f = std::make_shared<KeptFolder>();
+            f->root = root;
+            f->rootKey = key;
+            f->inJunk = AnySegment(key, std::vector<std::wstring>(JunkDirs().begin(), JunkDirs().end()));
+            f->used = GetTickCount64();
+            g_folders.push_back(f);  // before reading, so the changes made meanwhile are seen
+            g_building = true;
+        }
+        CacheBuild(f);
+    }
+}
+
 // From the drive watchers: something changed at path.
 void CacheChanged(const std::wstring& path) {
     std::lock_guard lk(g_cacheM);

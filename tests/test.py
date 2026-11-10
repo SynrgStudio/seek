@@ -499,6 +499,16 @@ put("journal/made_while_stopped_qz.txt", "made while nothing watched\n")
 time.sleep(0.5)
 code, out = cli("find", {"query": "made_while_stopped_qz"}, via="--call")
 check("find: a file made while no background process ran is found at its next start", "journal\\made_while_stopped_qz.txt" in out, out)
+# and the folders the last one kept in memory are read again, with no search of them
+end = time.time() + 20
+while time.time() < end:
+    out = subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace")
+    if re.search(re.escape("\n  " + L + "  ") + r"[\d,]+ files", out):
+        break
+    time.sleep(0.3)
+check("cache: a new background process reads again the folders the last one kept", re.search(re.escape("\n  " + L + "  ") + r"[\d,]+ files", out) is not None, out)
+out = g()
+check("cache: so the first search after a restart comes from memory", "from Seek's memory" in out and "moved\\f.txt" in out, out)
 
 
 # ---- the background process and the sessions of other builds: an older one is served, a newer one makes it step aside
