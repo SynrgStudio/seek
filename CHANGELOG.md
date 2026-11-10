@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.5
+
+- **`find` with a folder and an extension, like `docs/ .png`, finds what is in that folder.** A part of the path was looked at only among the best 2,000 names kept, and with nothing but an extension or a common word those are the shallowest on the PC: a folder a few levels down had none of them, and the answer was "Nothing named like that" with the files right there. `src/main` listed a fraction of what it should for the same reason. Now the path is checked for every name that matches, so the list, its count and `summary` are of that folder.
+
 ## 0.4.4
 
 - **`find` answers about three times sooner.** On a PC with 4.9 million names, a search by name went from 100–150 ms to 40–50 ms, and one with a wildcard (`*.blend`) from about 400 ms to 100 ms. Seek's window searches at every letter typed, and the wait showed. What changed: each thread reads names that are next to each other in memory instead of one in eight; scoring a match no longer asks for memory, nor twice whether the name is a program; turning the best matches into paths and ranking them by what the user did lately runs on several threads; the list of what was created since the index is made once, not at every search; and wildcards compare letters without a call for each.
