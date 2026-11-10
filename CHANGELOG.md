@@ -4,6 +4,8 @@
 
 - **The folders in memory come back after a restart.** The background process remembers which folders it kept for `grep` (their paths, in `kept.txt`) and reads them again when it starts, so the first search after an update or a restart is answered from memory. Before, it walked the drive again: on a folder of 10,800 files that had left the system's cache, 6 s and a partial answer, cut by the time budget.
 - **`grep` runs a regex of plain texts joined by `|` as text,** without the regex engine: `foo|bar baz|x\.y`, which is how agents write most of theirs (93 of the 130 regexes with `|` in two days of calls). Files with none of the texts are passed over without being decoded, like for a literal pattern. The 93 over 10,800 files read from the drive: 183 s before, 19 s now; `ERROR|FATAL` in a log of 177 MB, 3.1 s before, 0.5 s now. And these find matches past the first 4,096 characters of a very long line, which the regex engine doesn't look at.
+- **`seek --stats`** shows what agents asked, by day and tool: how many calls, the time half of them and 95 of 100 took, how many found nothing, how many were cut by the time budget, and how many failed. It is kept in `stats.txt`, past the log's rotation (the log holds about two days), so Seek can be compared over time; the first time, it starts from what the log still has. The command line and Seek's own tests and benchmark aren't counted.
+- **The build on GitHub runs the tests on every push again,** and no longer publishes: releases are built, tested and published from the maintainer's PC, and the README says so. Before, each release cancelled that run, which left the README's badge failing.
 
 ## 0.3.7
 

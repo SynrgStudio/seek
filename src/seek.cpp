@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +28,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -66,6 +68,7 @@ int wmain(int argc, wchar_t** argv) {
         if (a == L"--call") return CliMain(argc, argv, true);
         if (a == L"--stop") return StopMain(argc, argv);
         if (a == L"--status") return StatusMain();
+        if (a == L"--stats") return StatsMain(argc, argv);
         if (a == L"--reindex") return ReindexMain(argc, argv);
         if (a == L"--version") {
             Print(L"seek " + Wide(SEEK_VERSION) + L"\n");
@@ -79,6 +82,7 @@ int wmain(int argc, wchar_t** argv) {
                   L"  seek --call <tool> [json]    the same, through the shared background process\n"
                   L"  seek --stop [here]           stop the background process (here: only if it runs from this file)\n"
                   L"  seek --status                how it is: indexes, watchers, folders in memory\n"
+                  L"  seek --stats [days|all]      what agents asked, by day: calls, times, what found nothing\n"
                   L"  seek --reindex [C D ...]     walk the drives again now (only where Jolt's index isn't used)\n"
                   L"  seek --version\n"
                   L"Example: seek --cli find \"{\\\"query\\\":\\\"report .pdf\\\"}\"\n"

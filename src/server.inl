@@ -135,6 +135,7 @@ std::wstring ExePath();
 void SaveState() {
     ActSave();
     CacheSaveList();
+    StatsSave();
 }
 
 void Serve(HANDLE pipe) {
@@ -149,6 +150,9 @@ void Serve(HANDLE pipe) {
             reply = R"({"text":"not this one"})";  // seek --stop here, from another seek.exe (a build): this one keeps running
         } else if (tool && tool->s == "__status") {  // seek --status, from any build
             reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
+        } else if (tool && tool->s == "__stats") {  // seek --stats
+            const Json* days = j.at("days");
+            reply = "{\"text\":" + JsonQuote(Utf8(StatsText(days && days->kind == Json::Num ? std::max(1, static_cast<int>(days->n)) : 14))) + "}";
         } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
             reply = "{\"tools\":" + ToolsLine() + "}";
         } else {
@@ -212,6 +216,7 @@ int DaemonMain() {
     (void)mx;
     LoadRules();  // before the watchers: they must already know what is private
     MoveOldData();
+    StatsLoad();  // before the first call is counted
     SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     // only this user, and SYSTEM, can connect
     std::wstring sddl = L"D:P(A;;GA;;;SY)";
@@ -239,6 +244,7 @@ int DaemonMain() {
             CacheSaveList();
             if (tick % 5 == 0) {
                 ActSave();
+                StatsSave();
                 ActWatchMissing();
             }
             if (tick % 10 == 0)
@@ -592,6 +598,28 @@ int StatusMain() {
         return 1;
     }
     Print(Wide(t->s));
+    return 0;
+}
+
+// seek --stats [days|all]: what agents asked, by day and tool. From the background process, which has the calls it
+// hasn't saved yet; without one, from stats.txt.
+int StatsMain(int argc, wchar_t** argv) {
+    LoadRules();
+    const std::wstring a = argc >= 3 ? argv[2] : L"";
+    const int days = a == L"all" ? 100000 : std::max(1, a.empty() ? 14 : _wtoi(a.c_str()));
+    if (HANDLE h = ConnectDaemon(0)) {
+        std::string reply;
+        WriteFrame(h, "{\"build\":" + JsonQuote(kBuild) + ",\"tool\":\"__stats\",\"days\":" + std::to_string(days) + "}");
+        const bool got = ReadFrame(h, reply);
+        CloseHandle(h);
+        Json j;
+        if (const Json* t = got && JsonParse(reply, j) ? j.at("text") : nullptr; t && t->kind == Json::Str && !t->s.empty()) {
+            Print(Wide(t->s));
+            return 0;
+        }
+    }
+    StatsLoad();
+    Print(StatsText(days));
     return 0;
 }
 

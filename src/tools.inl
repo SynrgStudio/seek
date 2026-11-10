@@ -5,6 +5,8 @@
 struct ToolOut {
     std::wstring text;
     bool error = false;
+    bool nothing = false;  // it found nothing
+    bool cut = false;      // the time budget ended it: the answer is part of what there is
 };
 
 std::wstring ArgStr(const Json& a, const char* k) {
@@ -257,7 +259,8 @@ ToolOut ToolFind(const Json& a) {
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
     if (found.empty())
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
-                L"; what was created since is watched.) For text inside files, use grep.\n" + building};
+                    L"; what was created since is watched.) For text inside files, use grep.\n" + building,
+                false, true};
 
     if (summary) {
         std::unordered_map<std::wstring, int> byFolder, byArea, byExt, byDrive;
@@ -398,7 +401,7 @@ ToolOut ToolFind(const Json& a) {
     const std::wstring count = (exact ? L"" : L"about ") + Thousands(matches) + (matches == 1 ? L" match" : L" matches");
     std::wstring head = L"find \"" + query + L"\" " + where + (scope.empty() ? L"" : L" (paths relative to it, subfolders included)") + L": ";
     if (!shown) {
-        if (!skipped && !offset) return {L"Nothing named like \"" + query + L"\" " + where + L" still exists (the index had some that are gone)."};
+        if (!skipped && !offset) return {L"Nothing named like \"" + query + L"\" " + where + L" still exists (the index had some that are gone).", false, true};
         if (after) return {head + count + L"; paging goes through the best " + Thousands(kRanked) + L" by name, and offset " + std::to_wstring(offset) +
                            L" is past them. Narrow the query, add path, or use summary for counts.\n" + building};
         return {head + count + L", so offset " + std::to_wstring(offset) + L" is past the last one.\n" + building};
@@ -540,7 +543,7 @@ ToolOut ToolGrep(const Json& a) {
         }
         if (!sign.empty()) {  // not a file's name
             out += regexMiss.empty() ? sign + L" is a regex sign: pass regex: true to use it as one.\n" : regexMiss;
-            return {out};
+            return {out, false, true, r.timedOut};
         }
         if (q.pattern.find_first_of(L" \\/") == std::wstring::npos && g_indexReady) {  // maybe it is a file's name
             Json fa;
@@ -555,7 +558,7 @@ ToolOut ToolGrep(const Json& a) {
             ToolOut names = ToolFind(fa);
             if (!names.error && names.text.rfind(L"Nothing", 0) != 0) out += L"No text matches, but some names look like it:\n" + names.text;
         }
-        return {out};
+        return {out, false, true, r.timedOut};
     }
     if (summary) {
         std::vector<const FileHits*> v;
@@ -565,7 +568,7 @@ ToolOut ToolGrep(const Json& a) {
         for (size_t i = 0; i < v.size() && i < 40; ++i)
             out += L"  " + std::to_wstring(v[i]->matches) + L"  " + Relative(v[i]->path, base) + (v[i]->doc ? L"  (document)" : L"") + L"\n";
         if (v.size() > 40) out += L"  … and " + Thousands(v.size() - 40) + L" more files\n";
-        return {out + tail};
+        return {out + tail, false, false, r.timedOut};
     }
     std::wstring body;
     int index = 0, shown = 0;
@@ -612,7 +615,7 @@ ToolOut ToolGrep(const Json& a) {
     for (const FileHits& f : r.files) stored += static_cast<int>(f.lines.size());
     if (offset + shown < stored) tail += L"More: offset=" + std::to_wstring(offset + shown) + L".\n";
     if (!isFile) head += L"Paths below " + base + L".\n";
-    return {note + head + body + tail};
+    return {note + head + body + tail, false, false, r.timedOut};
 }
 
 // ---- recent
@@ -705,11 +708,12 @@ ToolOut ToolRecent(const Json& a) {
     notes += walked ? L"; dates read from disk" + std::wstring(walkCut ? L" for part of the folder, it is big" : L"") + L")" : L")";
     if (!shown)
         return {head + L": nothing. " + notes + L"\n" +
-                (scope.empty() ? L"Seek knows what changed while it was running, and what the drives' change journals held when it started. Pass path to read dates from disk.\n" : L"")};
+                (scope.empty() ? L"Seek knows what changed while it was running, and what the drives' change journals held when it started. Pass path to read dates from disk.\n" : L""),
+                false, true, walkCut};
     std::wstring tail;
     if (v.size() > static_cast<size_t>(shown)) tail = L"(more: raise limit, narrow with query or path.)\n";
     if (!system) tail += L"System places (AppData, Windows, Program Files, temp, caches) and what .gitignore leaves out are left out; include_system shows them.\n";
-    return {head + L":\n" + list + notes + L"\n" + tail};
+    return {head + L":\n" + list + notes + L"\n" + tail, false, false, walkCut};
 }
 
 // ---- status: what the background process knows, for seek --status
@@ -796,6 +800,173 @@ std::wstring Ms(double ms) {
     return Thousands(static_cast<uint64_t>(ms + 0.5)) + L" ms";
 }
 
+// ---- stats: what agents asked, by day and tool, kept past the log's rotation (stats.txt), for seek --stats. The
+// times are counted in steps, which is enough to tell a median of 15 ms from one of 30.
+
+constexpr double kStatBounds[] = {1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000, 1500, 2000, 3000, 5000, 10000};  // ms: each step's upper edge
+constexpr int kStatBuckets = static_cast<int>(std::size(kStatBounds)) + 1;  // and one for what is past them
+struct Stat {
+    uint64_t calls = 0, errors = 0;
+    int64_t nothing = 0, cut = 0;  // -1: not known (a day taken from the log, which doesn't say)
+    uint64_t bucket[kStatBuckets] = {};
+};
+std::mutex g_statM;
+std::map<std::pair<std::string, std::string>, Stat> g_stats;  // by day ("2026-11-09") and tool
+bool g_statsDirty = false;
+
+// The command line and Seek's own tests and benchmark aren't what agents asked.
+bool StatCounts(const std::wstring& client) { return client != L"command line" && client != L"bench" && client.rfind(L"seek-", 0) != 0; }
+
+void StatAdd(const std::string& day, const std::string& tool, double ms, bool error, int nothing, int cut) {
+    if (tool != "find" && tool != "grep" && tool != "recent") return;
+    std::lock_guard lk(g_statM);
+    Stat& s = g_stats[{day, tool}];
+    ++s.calls;
+    s.errors += error;
+    if (nothing < 0 || s.nothing < 0) {
+        s.nothing = s.cut = -1;
+    } else {
+        s.nothing += nothing;
+        s.cut += cut;
+    }
+    int b = 0;
+    while (b < kStatBuckets - 1 && ms > kStatBounds[b]) ++b;
+    ++s.bucket[b];
+    g_statsDirty = true;
+}
+
+std::wstring StatsFile() { return DataDir() + L"\\stats.txt"; }
+
+void StatsSave() {
+    std::string out = "# Seek: what agents asked, by day and tool: calls, errors, found nothing, cut by the time budget (-1: not known), and how\n"
+                      "# many took up to 1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000, 1500, 2000, 3000, 5000, 10000 ms,\n"
+                      "# and more. Rewritten automatically; seek --stats shows it.\n";
+    {
+        std::lock_guard lk(g_statM);
+        if (!g_statsDirty) return;
+        g_statsDirty = false;
+        for (const auto& [k, s] : g_stats) {
+            out += k.first + "\t" + k.second + "\t" + std::to_string(s.calls) + "\t" + std::to_string(s.errors) + "\t" + std::to_string(s.nothing) + "\t" +
+                   std::to_string(s.cut) + "\t";
+            for (int b = 0; b < kStatBuckets; ++b) out += (b ? " " : "") + std::to_string(s.bucket[b]);
+            out += "\n";
+        }
+    }
+    const std::wstring f = StatsFile(), tmp = f + L".tmp";
+    {
+        std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+        o << out;
+    }
+    MoveFileExW(tmp.c_str(), f.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// From stats.txt. The first time there is none: then from what the log still has, which doesn't say what found
+// nothing or was cut.
+void StatsLoad() {
+    std::ifstream in(StatsFile(), std::ios::binary);
+    std::string line;
+    if (in) {
+        std::lock_guard lk(g_statM);
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            const std::vector<std::string> f = Fields(line);
+            if (f.size() < 7) continue;
+            Stat s;
+            s.calls = _strtoui64(f[2].c_str(), nullptr, 10);
+            s.errors = _strtoui64(f[3].c_str(), nullptr, 10);
+            s.nothing = _strtoi64(f[4].c_str(), nullptr, 10);
+            s.cut = _strtoi64(f[5].c_str(), nullptr, 10);
+            const char* p = f[6].c_str();
+            for (int b = 0; b < kStatBuckets && *p; ++b) {
+                char* end = nullptr;
+                s.bucket[b] = _strtoui64(p, &end, 10);
+                p = end;
+            }
+            g_stats[{f[0], f[1]}] = s;
+        }
+        return;
+    }
+    for (const wchar_t* name : {L"\\log.old.txt", L"\\log.txt"}) {
+        std::ifstream log(DataDir() + name, std::ios::binary);
+        while (std::getline(log, line)) {  // "2026-11-08 18:32  client  find {...}  ->  ok, 12 ms"
+            const size_t arrow = line.rfind("  ->  ");
+            if (line.size() < 20 || arrow == std::string::npos) continue;
+            size_t at = std::string::npos;
+            std::string tool;
+            for (const char* t : {"find", "grep", "recent"})
+                if (const size_t p = line.find(std::string("  ") + t + " {", 16); p < at) {
+                    at = p;
+                    tool = t;
+                }
+            if (at == std::string::npos || at < 18 || !StatCounts(Wide(line.substr(18, at - 18)))) continue;
+            const std::string res = line.substr(arrow + 6);  // "ok, 1,234 ms"
+            const size_t comma = res.find(", ");
+            if (comma == std::string::npos) continue;
+            std::string num;
+            for (const char c : res.substr(comma + 2)) {
+                if (isdigit(static_cast<unsigned char>(c)) || c == '.') num += c;
+                else if (c != ',') break;
+            }
+            StatAdd(line.substr(0, 10), tool, atof(num.c_str()), res.rfind("error", 0) == 0, -1, -1);
+        }
+    }
+}
+
+// The last `days` days with calls, a row per tool, and their total.
+std::wstring StatsText(int days) {
+    std::lock_guard lk(g_statM);
+    if (g_stats.empty()) return L"Seek " SEEK_VERSION L": no calls from agents counted yet. (" + StatsFile() + L")\n";
+    std::vector<std::string> shown;  // the days, the newest first
+    for (auto it = g_stats.rbegin(); it != g_stats.rend(); ++it)
+        if (shown.empty() || shown.back() != it->first.first) {
+            if (static_cast<int>(shown.size()) == days) break;
+            shown.push_back(it->first.first);
+        }
+    auto cell = [](const std::wstring& s, size_t w) { return std::wstring(w > s.size() ? w - s.size() : 0, L' ') + s; };
+    auto within = [](const Stat& s, double share) -> std::wstring {  // the step that share of the calls fit in
+        const uint64_t need = std::max<uint64_t>(1, static_cast<uint64_t>(std::ceil(static_cast<double>(s.calls) * share)));
+        uint64_t seen = 0;
+        for (int b = 0; b < kStatBuckets; ++b)
+            if ((seen += s.bucket[b]) >= need) return b < kStatBuckets - 1 ? Thousands(static_cast<uint64_t>(kStatBounds[b])) : L">10,000";
+        return L"?";
+    };
+    auto row = [&](const std::wstring& day, const std::string& tool, const Stat& s) {
+        return day + std::wstring(12 - day.size(), L' ') + Wide(tool) + std::wstring(8 - tool.size(), L' ') + cell(Thousands(s.calls), 6) + cell(within(s, 0.5), 8) +
+               cell(within(s, 0.95), 8) + cell(s.nothing < 0 ? L"-" : Thousands(static_cast<uint64_t>(s.nothing)), 9) +
+               cell(s.cut < 0 ? L"-" : Thousands(static_cast<uint64_t>(s.cut)), 6) + cell(Thousands(s.errors), 8) + L"\n";
+    };
+    std::wstring out = L"Seek " SEEK_VERSION L": what agents asked, the last " + std::to_wstring(shown.size()) + (shown.size() == 1 ? L" day" : L" days") +
+                       L" with calls. Times are the tool's own, in ms: half of the calls took at most `median`, 95 of 100 at most `p95`.\n" +
+                       L"day         tool     calls  median     p95  nothing   cut  errors\n";
+    std::map<std::string, Stat> total;
+    for (const std::string& day : shown) {
+        bool first = true;
+        for (const char* tool : {"find", "grep", "recent"}) {
+            const auto it = g_stats.find({day, tool});
+            if (it == g_stats.end()) continue;
+            out += row(first ? Wide(day) : L"", tool, it->second);
+            first = false;
+            Stat& t = total[tool];
+            t.calls += it->second.calls;
+            t.errors += it->second.errors;
+            if (it->second.nothing < 0 || t.nothing < 0) t.nothing = t.cut = -1;
+            else t.nothing += it->second.nothing, t.cut += it->second.cut;
+            for (int b = 0; b < kStatBuckets; ++b) t.bucket[b] += it->second.bucket[b];
+        }
+    }
+    if (shown.size() > 1) {
+        bool first = true;
+        for (const char* tool : {"find", "grep", "recent"})
+            if (const auto it = total.find(tool); it != total.end()) {
+                out += row(first ? L"all of them" : L"", tool, it->second);
+                first = false;
+            }
+    }
+    return out + L"nothing: found nothing. cut: stopped at the time budget, with part of the answer. -: not known, for days taken from the log.\n"
+                 L"The command line and Seek's own tests and benchmark aren't counted. Kept in " + StatsFile() + L"\n";
+}
+
 ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& client) {
     const auto t0 = std::chrono::steady_clock::now();
     ++g_calls;
@@ -811,7 +982,8 @@ ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& c
     }
     std::string argText;
     JsonWrite(args, argText);
-    Audit((client.empty() ? L"?" : client) + L"  " + Wide(name) + L" " + Wide(argText) + L"  ->  " + (out.error ? L"error" : L"ok") + L", " +
-          Ms(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count()));
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    Audit((client.empty() ? L"?" : client) + L"  " + Wide(name) + L" " + Wide(argText) + L"  ->  " + (out.error ? L"error" : L"ok") + L", " + Ms(ms));
+    if (g_watching && StatCounts(client)) StatAdd(Utf8(DateText(NowFt()).substr(0, 10)), name, ms, out.error, out.nothing, out.cut);  // in the background process
     return out;
 }
