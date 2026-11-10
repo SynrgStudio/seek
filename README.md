@@ -149,7 +149,7 @@ With Visual Studio and its C++ tools:
 
 ```
 build.bat                         build\seek.exe
-python -I tests\test.py           about 60 checks, in %TEMP%, with a background process of their own
+python -I tests\test.py           about 140 checks, in %TEMP%, with a background process of their own
 python -I bench\bench.py          the comparison, against whatever tools it finds
 ```
 
