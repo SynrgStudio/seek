@@ -704,5 +704,11 @@ check("status: without the background process, it says so", r.returncode == 1 an
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 shutil.rmtree(JOLT, ignore_errors=True)
+# The website's corpus (web/) says what the code, the version and the benchmark say. Not on GitHub's machines: their
+# shallow clone has no history to date the facts by.
+if not CI:
+    r = subprocess.run([sys.executable, "-I", os.path.join(os.path.dirname(HERE), "tools", "web_corpus.py"), "--check"], capture_output=True, timeout=120)
+    check("web: the corpus is what tools/web_corpus.py writes from the code, the version and bench/results.json", r.returncode == 0,
+          (r.stdout + r.stderr).decode("utf-8", "replace"))
 print("\n%s" % ("all passed" if not fails else "%d failed" % fails))
 sys.exit(1 if fails else 0)

@@ -1,0 +1,758 @@
+# Seek's facts, for synrgs.tech: written by tools/web_corpus.py from bench/results.json, src/version.h and the
+# source code. Don't edit by hand: change what it reads, and run it (tests/test.py fails when this is stale).
+
+[project]
+name = "Seek"
+version = "0.5.0"
+released = 2026-11-11
+license = "GPL-3.0"
+platforms = ["Windows 10", "Windows 11"]
+repo = "https://github.com/SynrgStudio/seek"
+download = "https://github.com/SynrgStudio/seek/releases/latest"
+install = "irm https://raw.githubusercontent.com/SynrgStudio/seek/main/install.ps1 | iex"
+protocol = "https://github.com/SynrgStudio/seek/blob/main/PROTOCOL.md"
+changelog = "https://github.com/SynrgStudio/seek/blob/main/CHANGELOG.md"
+related = ["https://jolt.synrgs.tech"]
+bench_seek_version = "0.1.0"   # the Seek the benchmark measured; newer ones are faster at find (CHANGELOG 0.4.4)
+
+[facts.names_millions]
+value = 4.9
+unit = "million"
+what = "files and folders on the benchmark PC's three drives"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.machine]
+value = "a Ryzen 7 5800X with 8 cores, 32 GB of memory, two NVMe SSDs and a 1 TB hard disk, on Windows 11 Pro"
+what = "the benchmark PC"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.tool_versions]
+value = "Seek 0.1.0, Everything 1.4.1.1032 with es 1.1.0.38, fff-mcp 0.11.0, ripgrep 15.2.0, fd 10.5.2, git 2.55.0 and Windows PowerShell 5.1"
+what = "the versions of every tool in the benchmark"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.blend_files]
+value = 8200
+unit = "files"
+what = "the .blend files on the benchmark PC, as Everything counted them"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.projects_files]
+value = 10700
+unit = "files"
+what = "files in the folder of every project, the text search's big case"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.repo_files]
+value = 52
+unit = "files"
+what = "files in Jolt's repository, the text search's small case"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_ms]
+value = 52
+unit = "ms"
+what = "find one file by name, place unknown, on every drive (4.9 million names); the MCP server warm, timed from request to answer"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_everything_ms]
+value = 93
+unit = "ms"
+what = "the same with Everything's es.exe, started once per search as an agent's shell runs it (the time includes starting es.exe)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_windows_search_ms]
+value = 233
+unit = "ms"
+what = "the same with Windows Search; it didn't find the file"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_fd_s]
+value = 4.7
+unit = "s"
+what = "the same with fd walking every drive, with the folders already in Windows' memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_ripgrep_files_s]
+value = 5.8
+unit = "s"
+what = "the same with ripgrep --files walking every drive, folders in memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_dir_s]
+value = 85
+unit = "s"
+what = "the same with dir /s, over the user profile only"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.find_get_childitem_s]
+value = 98
+unit = "s"
+what = "the same with Get-ChildItem -Recurse, over the user profile only"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.find_fd_from_disk_min]
+value = 15
+unit = "min"
+what = "fd walking every drive read from disk was cut at 15 minutes without finishing (the hard disk)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_typo_ms]
+value = 57
+unit = "ms"
+what = "the same search with a typo in the name (fuzy.inl for fuzzy.inl); Seek found it"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_typo_everything_found]
+value = false
+what = "whether Everything found the file with that typo"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_ms]
+value = 55
+unit = "ms"
+what = "how many .blend files there are and where, as Seek's summary"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_tokens]
+value = 378
+unit = "tokens"
+what = "the tokens of that summary (characters / 4)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_everything_list_ms]
+value = 100
+unit = "ms"
+what = "Everything listing them all"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_everything_list_tokens]
+value = 196438
+unit = "tokens"
+what = "the tokens of Everything's list (characters / 4)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_everything_count_ms]
+value = 74
+unit = "ms"
+what = "Everything giving only the count"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_fd_s]
+value = 5.0
+unit = "s"
+what = "fd listing them, walking every drive with the folders in memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_fd_tokens]
+value = 194388
+unit = "tokens"
+what = "the tokens of fd's list"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_ripgrep_files_s]
+value = 5.5
+unit = "s"
+what = "ripgrep --files listing them, measured on its own the same day"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.count_dir_s]
+value = 567
+unit = "s"
+what = "dir /s listing them over C:\\Users, D: and E:"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.count_dir_tokens]
+value = 104157
+unit = "tokens"
+what = "the tokens of that listing"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.count_windows_search_found]
+value = 9
+unit = "files"
+what = "how many of the .blend files Windows Search found"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.recent_ms]
+value = 9.1
+unit = "ms"
+what = "what changed lately, from Seek"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.recent_everything_ms]
+value = 105
+unit = "ms"
+what = "the newest 10 files on the PC, from Everything"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_ms]
+value = 0.4
+unit = "ms"
+what = "search a word in Jolt's repository (52 files), the folder already in Seek's memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_first_ms]
+value = 3.2
+unit = "ms"
+what = "the same, the first search of that folder (read from the drive)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_fff_ms]
+value = 0.61
+unit = "ms"
+what = "the same with fff, warm"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_ripgrep_ms]
+value = 29
+unit = "ms"
+what = "the same with ripgrep"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_git_grep_ms]
+value = 35
+unit = "ms"
+what = "the same with git grep"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_repo_select_string_s]
+value = 6.7
+unit = "s"
+what = "the same with PowerShell's Select-String, which reads build outputs too"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.grep_repo_select_string_tokens]
+value = 2348604
+unit = "tokens"
+what = "the tokens of Select-String's answer"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.grep_repo_findstr_s]
+value = 2.8
+unit = "s"
+what = "the same with findstr /s, which reads build outputs too"
+source = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
+date = 2026-11-08
+
+[facts.grep_projects_ms]
+value = 11
+unit = "ms"
+what = "search a word in every project (10,700 files), the folder already in Seek's memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_projects_first_ms]
+value = 132
+unit = "ms"
+what = "the same, the first search of that folder (read from the drive)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_projects_fff_ms]
+value = 36
+unit = "ms"
+what = "the same with fff, warm"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_projects_ripgrep_ms]
+value = 487
+unit = "ms"
+what = "the same with ripgrep"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.text_vs_fff]
+value = 3.3
+unit = "x"
+what = "how many times faster than fff Seek searched the text of every project (from memory, both)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.text_vs_ripgrep]
+value = 45
+unit = "x"
+what = "how many times faster than ripgrep Seek searched the text of every project (Seek from memory; ripgrep reads every time)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.text_first_vs_ripgrep]
+value = 3.7
+unit = "x"
+what = "how many times faster than ripgrep Seek's first search of every project was (both reading the drive)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_repo_ms]
+value = 0.33
+unit = "ms"
+what = "find a name inside Jolt's repository"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_repo_fff_ms]
+value = 0.43
+unit = "ms"
+what = "the same with fff"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_repo_typo_ms]
+value = 0.4
+unit = "ms"
+what = "the same with a typo"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.find_repo_typo_fff_ms]
+value = 0.44
+unit = "ms"
+what = "the same with fff, with a typo"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.start_ms]
+value = 296
+unit = "ms"
+what = "from starting the background process to its first answer, with Jolt's index"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.start_fff_repo_ms]
+value = 110
+unit = "ms"
+what = "fff's first answer in Jolt's repository (it scans the folder)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.start_fff_projects_ms]
+value = 246
+unit = "ms"
+what = "fff's first answer in every project"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.memory_mb]
+value = 328
+unit = "MB"
+what = "Seek's memory of its own, with every project kept in memory for grep; one process for every agent"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.memory_no_folders_mb]
+value = 32
+unit = "MB"
+what = "Seek's memory of its own with no folder kept in memory (the index files are mapped from disk, not counted)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.memory_everything_mb]
+value = 493
+unit = "MB"
+what = "Everything's memory"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.memory_fff_repo_mb]
+value = 114
+unit = "MB"
+what = "fff's memory for Jolt's repository, per agent session and folder"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.memory_fff_projects_mb]
+value = 201
+unit = "MB"
+what = "fff's memory for every project, per agent session and folder"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.overhead_ms]
+value = 0.1
+unit = "ms"
+what = "the trip from an agent's session to the background process and back, the search left out"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.index_ssd_s]
+value = 18.0
+unit = "s"
+what = "Seek walking a drive itself (no Jolt): 2.1 million names on an NVMe SSD"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.index_ssd2_s]
+value = 3.8
+unit = "s"
+what = "the same: 1.3 million names on another SSD"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.index_hdd_min]
+value = 19.5
+unit = "min"
+what = "the same: 1.4 million names on a hard disk, read cold"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_history_first_s]
+value = 6.0
+unit = "s"
+what = "grep over every project in the first comparison (stopped at its 6 s budget)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.grep_history_last_ms]
+value = 11
+unit = "ms"
+what = "the same search after the last step of grep's history (data/results.json, history)"
+source = "bench/results.json (bench/bench.py), Seek 0.1.0, run committed in b96c1d3"
+date = 2026-11-08
+
+[facts.index_entry_bytes]
+value = 12
+unit = "bytes"
+what = "the size of one name's entry in the drive index (Jolt's format): parent, name, folder or not, depth"
+source = "src/index.inl"
+date = 2026-11-11
+
+[facts.name_scan_threads]
+value = 16
+unit = "threads"
+what = "at most, to run every name through the fuzzy matching; one for under 100,000 names"
+source = "src/index.inl"
+date = 2026-11-11
+
+[facts.index_walk_threads]
+value = 8
+unit = "threads"
+what = "at most, to walk a drive when Seek makes its own index"
+source = "src/index.inl"
+date = 2026-11-11
+
+[facts.grep_threads]
+value = 12
+unit = "threads"
+what = "at most, to list a folder and read its files"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.binary_probe_kb]
+value = 8
+unit = "KB"
+what = "what grep reads of a file to tell it is binary; then the rest isn't read"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.grep_file_max_mb]
+value = 16
+unit = "MB"
+what = "files over this aren't read by grep in a folder (named in the answer); a file given as the path is read whatever its size"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.grep_line_chars]
+value = 240
+unit = "characters"
+what = "a line longer than this is shown around its matches only"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.grep_line_windows]
+value = 4
+unit = "windows"
+what = "how many matches of one long line are shown, each with what is around it"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.grep_context_max]
+value = 200
+unit = "lines"
+what = "the most context grep shows on each side of a match (before, after)"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.regex_line_chars]
+value = 4096
+unit = "characters"
+what = "regex looks at this many characters of a very long line"
+source = "src/grep.inl"
+date = 2026-11-11
+
+[facts.cache_mb]
+value = 512
+unit = "MB"
+what = "folders kept in memory for grep, at most, by default (cache in seek.txt)"
+source = "src/util.inl"
+date = 2026-11-11
+
+[facts.cache_idle_min]
+value = 20
+unit = "min"
+what = "a folder nobody searched for this long is let go"
+source = "src/cache.inl"
+date = 2026-11-11
+
+[facts.cache_changes_max]
+value = 20000
+unit = "changes"
+what = "more changes than this between two searches, and a kept folder is read again whole"
+source = "src/cache.inl"
+date = 2026-11-11
+
+[facts.ranked_results]
+value = 2000
+unit = "results"
+what = "the best names by name that find ranks again by what the user is doing, and pages through"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.jolt_check_min]
+value = 10
+unit = "min"
+what = "how often Seek looks for a newer copy of Jolt's index (and of its own)"
+source = "src/server.inl"
+date = 2026-11-11
+
+[facts.activity_save_min]
+value = 5
+unit = "min"
+what = "how often what Seek saw change is saved to disk"
+source = "src/server.inl"
+date = 2026-11-11
+
+[facts.rank_changed_hour]
+value = 3000
+unit = "points"
+what = "points for a file changed in the last hour"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_changed_day]
+value = 1500
+unit = "points"
+what = "points for one changed in the last day"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_changed_week]
+value = 600
+unit = "points"
+what = "points for one changed in the last week"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_jolt_folder_max]
+value = 1200
+unit = "points"
+what = "points, at most, for a file in a folder the user opens in Jolt, by how much it is used"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_jolt_file_max]
+value = 2000
+unit = "points"
+what = "points, at most, for a file the user opened from Jolt"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_jolt_picked_max]
+value = 5000
+unit = "points"
+what = "points, at most, for a file picked in Jolt's Ctrl+P for this very text"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_near]
+value = 2500
+unit = "points"
+what = "points for a file inside the folder given as near"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_near_level]
+value = 150
+unit = "points"
+what = "points for each folder level shared with near, otherwise"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.rank_noise]
+value = 2000
+unit = "points"
+what = "points taken from a file in a cache, a package store, a log or AppData"
+source = "src/tools.inl"
+date = 2026-11-11
+
+[facts.protocol_version]
+value = 1
+what = "the version of Seek's protocol for programs (PROTOCOL.md)"
+source = "src/server.inl"
+date = 2026-11-11
+
+[facts.fff_agent_shell_s]
+value = 24.7
+unit = "s"
+what = "fff's README: a whole agent task in a big repository with shell search (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_agent_fff_s]
+value = 14.3
+unit = "s"
+what = "fff's README: the same task with fff (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_agent_shell_tokens]
+value = 85400
+unit = "tokens"
+what = "fff's README: that task's tokens with shell search (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_agent_fff_tokens]
+value = 82500
+unit = "tokens"
+what = "fff's README: with fff (almost the same) (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_heldout_fff_s]
+value = 9.0
+unit = "s"
+what = "fff's README: a held-out run where one model was slower with fff (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_heldout_shell_s]
+value = 8.1
+unit = "s"
+what = "fff's README: the same held-out run with shell search (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_chromium_files]
+value = 500000
+unit = "files"
+what = "fff's README: the Chromium checkout of its test (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_chromium_ripgrep_s_min]
+value = 3
+unit = "s"
+what = "fff's README: each ripgrep run on that checkout, from (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_chromium_ripgrep_s_max]
+value = 9
+unit = "s"
+what = "fff's README: each ripgrep run on that checkout, to (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.fff_chromium_query_ms_max]
+value = 10
+unit = "ms"
+what = "fff's README: each fff query on that checkout, under (measured by others, on their machines)"
+source = "https://github.com/dmtrKovalenko/fff"
+date = 2026-11-11
+
+[facts.everything_index_min_per_million]
+value = 1
+unit = "min"
+what = "Everything's FAQ: indexing about a million files (measured by others, on their machines)"
+source = "https://www.voidtools.com/faq/"
+date = 2026-11-11
+
+[facts.everything_mb_per_million]
+value = 100
+unit = "MB"
+what = "Everything's FAQ: memory for about a million files (measured by others, on their machines)"
+source = "https://www.voidtools.com/faq/"
+date = 2026-11-11
+
+[facts.ripgrep_kernel_s]
+value = 0.082
+unit = "s"
+what = "ripgrep's README, the Linux kernel's source: ripgrep (measured by others, on their machines)"
+source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
+date = 2026-11-11
+
+[facts.ripgrep_kernel_git_grep_s]
+value = 0.273
+unit = "s"
+what = "the same: git grep -P (measured by others, on their machines)"
+source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
+date = 2026-11-11
+
+[facts.ripgrep_kernel_ag_s]
+value = 0.443
+unit = "s"
+what = "the same: The Silver Searcher (measured by others, on their machines)"
+source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
+date = 2026-11-11
+
+[facts.ripgrep_kernel_ugrep_s]
+value = 0.639
+unit = "s"
+what = "the same: ugrep (measured by others, on their machines)"
+source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
+date = 2026-11-11
+
+[facts.ripgrep_kernel_ack_s]
+value = 2.9
+unit = "s"
+what = "the same: ack (measured by others, on their machines)"
+source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
+date = 2026-11-11
+
+[facts.claude_glob_timeout_s]
+value = 20
+unit = "s"
+what = "users' reports: Claude Code's Glob tool timing out in large repositories, where ripgrep alone takes under a second (measured by others, on their machines)"
+source = "https://github.com/anthropics/claude-code/issues"
+date = 2026-11-11
+
+[media.icon]
+file = "seek-512.png"
+what = "Seek's icon, 512 px; seek-256.png is the same at 256 px, seek.ico has every Windows size"
