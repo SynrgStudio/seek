@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+Seek's protocol for programs, version 1: what any program can count on when it asks Seek through its pipe. The first step for client packages in Rust, Python and npm ([roadmap](https://github.com/SynrgStudio/seek/issues/27)).
+
+- **[PROTOCOL.md](PROTOCOL.md)**: the whole protocol as a spec. It covers the messages, every command's arguments and rows, the error codes, how a program starts Seek or a copy of its own, and what version 1 promises to keep.
+- **Stable names** for the commands for programs: `find.rows`, `grep.rows`, `recent.rows`, `status.rows` and `opened`. The names they had before (`__rows` and the like) keep working.
+- **`hello`**: what a program is talking to (Seek's version, the protocol versions it speaks, the `seek.exe` running, its data folder, and whether the index is loaded), answered without touching the index.
+- **`stop`**, for a program that brings a newer Seek than the one running.
+- **Every reply says the protocol's version (`api`)**, and an error says its kind in `code`: `bad_args`, `not_found`, `not_a_folder`, `private`, `index_loading`, `unknown_command`, `api_too_new`, `bad_request` or `failed`. A request for a newer protocol than the daemon speaks is answered with `api_too_new`.
+- **`find.rows` takes `max` inside `args` too.**
+- **The installer stops a running Seek wherever it runs from**, a copy a program carries included. Before, it stopped one only when Seek was already installed.
+- **Tests keep the replies' shapes** (`tests/protocol/v1.json`): a shape that changes fails the tests, old names included.
+
 ## 0.4.10
 
 - **`__status_rows`**, for programs, through the pipe: Seek's version, and for each drive whether its index is loading, being made for the first time (with the names found so far), ready or missing, whose it is (Jolt's or Seek's own) and when it was taken. A program can say "Seek is indexing D: (812,345 names)" while the first index is made, instead of making up a percentage. README has the format.
