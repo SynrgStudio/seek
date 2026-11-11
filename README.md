@@ -143,6 +143,25 @@ seek --stats                                        what agents asked, by day: c
 seek --stop                                         stop the background process
 ```
 
+## For programs
+
+Any program of the same user can ask Seek's background process directly, without MCP, through its named pipe `\\.\pipe\seek-<USERNAME>`: each message is a 4-byte little-endian length and that many bytes of JSON, both ways, and a connection can stay open for one request after another. If the pipe isn't there, start `seek.exe --daemon` and try again for a few seconds. Give a `build` that starts with `0.0.0`, so that it is never taken for a newer Seek (which makes the background process step aside for it).
+
+These answer in rows, for a program that lists them itself; they aren't written to the log or counted in `seek --stats`:
+
+| tool | args | the answer's `text` |
+|---|---|---|
+| `__rows` | as `find` (`query`, `path`, `near`, `type`, `ignored`), and `"max": 5000` next to `args` | `#rows`, how many, `1` when that count is exact, `real`, `near` (close names: a typo) or `scattered`; then `D` or `F`, a tab and the path, best first |
+| `__grep_rows` | as `grep` (`pattern`, `path`, `regex`, `case`, `glob`, `ignored`...), `limit` (2,000) and `per_file` (100) | `#rows`, files with matches, matching lines, `1` when not all are listed, and `asked`, `nocase` or `regex` (how it searched); then the path, the line, the column and the line's text, tab-separated |
+| `__recent_rows` | as `recent` (`path`, `query`, `since`, `limit` (1,000)), and `walk: false` for only what Seek saw change, without reading the dates on disk | `#rows`, how many, `1` when that is all; then `D` or `F`, the path, the time in Unix seconds, and `created`, `changed`, `renamed` or `opened` |
+| `__opened` | `path` | `ok`: the file ranks as used in `find`, and `recent` lists it as opened |
+
+```json
+{"build": "0.0.0 myapp", "tool": "__rows", "max": 5000, "args": {"query": "report .pdf"}}
+```
+
+Sizes and dates aren't in the rows: read them for the ones on screen. [Seek's window](https://seek.synrgs.tech) is built this way.
+
 ## Building and testing
 
 With Visual Studio and its C++ tools:

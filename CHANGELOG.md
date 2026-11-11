@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.7
+
+- **`find` below a folder leaves out what `.gitignore` leaves out there, and dependency and cache folders**, as `grep` already did: a search for notes in a Rust repository listed the files in `target` too, and in one repository here 449 of 509 `.md` files were in ignored folders. The answer says how many were left out, and `ignored: true` lists them. When a name is only in there, it is shown from there, saying so. Searches on every drive are as before.
+- **`!folder/` leaves out what is in that folder** (`ext:md !target/`, `!docs/old/`). `!word` still leaves out names with the word.
+- **For programs that list the answers themselves**, through the pipe: `__grep_rows` gives grep's matches one per line, with the path, line, column and text; `__recent_rows` gives recent's files with the time in Unix seconds and what happened, and `walk: false` skips reading the dates on disk; `__opened` tells Seek a program opened a file, so it ranks as used and `recent` lists it as opened. README has the details.
+- **`recent` takes `walk: false`** too, and a path fragment in its query (`src/ .md`, `!target/`).
+- **`grep` says when a slow first search read a hard disk**: the next ones come from memory.
+
 ## 0.4.6
 
 - **`find` takes `{alpha,beta gamma}` as "a name with one of these in it".** A group in braces on its own was read as a wildcard that had to be the whole name, so `{report,summary} .pdf` found nothing even with both files there, and a space inside the braces split the query into words. Now a space inside braces belongs to the alternative, and braces alone match names that have one of the alternatives as typed, as whole words, like "in quotes". With the rest of a name around them (`{alpha,beta}.stl`, `*{2024,2025}*`) they are still a wildcard.
