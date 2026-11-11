@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.9
+
+- **`recent` right after Seek starts waits for what the last run saw.** The first call after the background process started (after an update or a reboot) could come before the saved activity was read: it answered with almost nothing, and "changes seen live since 0000-00-00". It now waits for that, as `find` does: about a second, once.
+
 ## 0.4.8
 
 - **`recent` answers sooner, above all with `walk: false` or a `path`.** It asked whether each path it had seen change was left out by a `.gitignore`, which reads the disk, before asking whether its name was wanted at all; now the cheap questions come first, and the answers about `.gitignore` are kept for a minute between calls. Here, with a `path` and `walk: false`, from about 55 ms to under 10; with a query on every drive, about three times sooner.
