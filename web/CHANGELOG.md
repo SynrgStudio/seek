@@ -1,5 +1,9 @@
 # What changed in Seek's corpus
 
+## 2026-11-11, the Rust client's license and bundled option
+
+- `notes/programs.md`: `seek-client` is MIT OR Apache-2.0, can be used from the repository before it is published, and has a `bundled` option that carries a Seek release inside a program.
+
 ## 2026-11-11, for the ranking, the index and grep's history
 
 - New facts, read from the source: `rank_match_scale` (8), `rank_depth_max` (40), `rank_exact_program`, `rank_exact_name` and `rank_program`. `notes/ranking.md` now gives the score's formula: $8\,(m + r) - \min(d, 40) + \sum b$. The exact-name and program points are inside the 8, not added after it.

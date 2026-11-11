@@ -4,7 +4,7 @@ Packages that give a program Seek in a few lines. Each one speaks [PROTOCOL.md](
 
 | | package | state |
 |---|---|---|
-| [rust](rust) | `seek-client` on crates.io | written and tested; not published |
+| [rust](rust) | `seek-client` on crates.io | written and tested, with `bundled`; not published yet. Until it is, as a git dependency: `seek-client = { git = "https://github.com/SynrgStudio/seek", package = "seek-client" }` |
 | python | `seek-client` on PyPI | planned ([#24](https://github.com/SynrgStudio/seek/issues/24)) |
 | npm | `seek-client` on npm | planned ([#25](https://github.com/SynrgStudio/seek/issues/25)) |
 
@@ -29,5 +29,5 @@ A version published on crates.io, PyPI or npm can't be taken back, only yanked o
 
 ## Before the first publish
 
-- **The packages' license.** The Rust crate says `MIT OR Apache-2.0`, as most crates do. That is a proposal: a GPL client would oblige every program that links it to be GPL. Seek itself stays GPL-3.0, and runs as a separate process. The license files go next to each package when this is decided.
+- **The packages' license: decided,** `MIT OR Apache-2.0` (LICENSE-MIT and LICENSE-APACHE next to each package). A GPL client would oblige every program that links it to be GPL. Seek itself stays GPL-3.0, and runs as a separate process.
 - **The name `seek-client`** was checked free on crates.io, PyPI and npm on 2026-11-11.

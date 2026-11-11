@@ -12,4 +12,12 @@ license = "MIT OR Apache-2.0"
 keywords = ["search", "files", "windows", "index", "grep"]
 categories = ["filesystem", "os::windows-apis"]
 
+[features]
+# Carries the seek.exe of one Seek release (about 1 MB), checked against its SHA-256, and starts it when no newer Seek is
+# installed. See README, "Bundled".
+bundled = []
+
+[package.metadata.docs.rs]
+features = ["bundled"]
+
 [dependencies]

@@ -21,6 +21,8 @@
 
 mod json;
 mod pipe;
+#[cfg(any(feature = "bundled", test))]
+mod sha256;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -32,6 +34,25 @@ use pipe::Version;
 
 /// The protocol version this crate speaks.
 pub const PROTOCOL: u32 = 1;
+
+/// The Seek release this build carries, with the `bundled` feature: "0.5.1". `None` without it.
+#[cfg(feature = "bundled")]
+pub const BUNDLED_SEEK: Option<&str> = Some(env!("SEEK_CLIENT_BUNDLED_VERSION"));
+/// The Seek release this build carries, with the `bundled` feature: "0.5.1". `None` without it.
+#[cfg(not(feature = "bundled"))]
+pub const BUNDLED_SEEK: Option<&str> = None;
+
+/// The seek.exe the `bundled` feature carries, checked by build.rs against its release's SHA-256.
+#[cfg(feature = "bundled")]
+static BUNDLED_EXE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/seek.exe"));
+
+/// A seek.exe to start: a file there is, or the one this build carries, written out only when it is the one started.
+#[derive(Debug, Clone)]
+enum Exe {
+    File(PathBuf),
+    #[cfg_attr(not(feature = "bundled"), allow(dead_code))]
+    Bundled,
+}
 
 // ---- errors
 
@@ -144,6 +165,7 @@ pub struct Builder {
     start: bool,
     wait: Duration,
     timeout: Option<Duration>,
+    bundled_dir: Option<PathBuf>,
 }
 
 impl Default for Builder {
@@ -156,6 +178,7 @@ impl Default for Builder {
             start: true,
             wait: Duration::from_secs(15),
             timeout: None,
+            bundled_dir: std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"seek-client\seek")),
         }
     }
 }
@@ -200,6 +223,18 @@ impl Builder {
         self.timeout = Some(limit);
         self
     }
+    /// With the `bundled` feature: where the seek.exe it carries is written when it is the one to start, as
+    /// `%LOCALAPPDATA%\<name>\seek\seek-<version>.exe`. By default `<name>` is `seek-client`, shared by every program
+    /// that carries the same Seek.
+    pub fn app(mut self, name: &str) -> Self {
+        self.bundled_dir = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(name).join("seek"));
+        self
+    }
+    /// With the `bundled` feature: the folder where the seek.exe it carries is written, instead of [`app`](Self::app)'s.
+    pub fn bundled_dir(mut self, folder: impl Into<PathBuf>) -> Self {
+        self.bundled_dir = Some(folder.into());
+        self
+    }
     /// Connects, starting Seek when needed (PROTOCOL.md, "Starting Seek").
     pub fn connect(self) -> Result<Seek> {
         if !cfg!(windows) {
@@ -234,17 +269,38 @@ impl Seek {
         Builder::default()
     }
 
-    /// The newest seek.exe this program knows of, and its version; the installed one at the same version.
-    fn best_exe(&self) -> Option<(PathBuf, Version)> {
-        let mut best: Option<(PathBuf, Version)> = None;
+    /// The newest seek.exe this program knows of, and its version: the installed one, the program's own, and the one
+    /// this build carries, in that order at the same version.
+    fn best_exe(&self) -> Option<(Exe, Version)> {
+        let mut best: Option<(Exe, Version)> = None;
         for p in [self.b.installed.clone(), self.b.own.clone()].into_iter().flatten() {
             if let Some(v) = pipe::exe_version(&p) {
                 if best.as_ref().map_or(true, |(_, bv)| v > *bv) {
-                    best = Some((p, v));
+                    best = Some((Exe::File(p), v));
                 }
             }
         }
+        #[cfg(feature = "bundled")]
+        if let Some(v) = BUNDLED_SEEK.and_then(pipe::parse_version) {
+            if self.b.bundled_dir.is_some() && !BUNDLED_EXE.is_empty() && best.as_ref().map_or(true, |(_, bv)| v > *bv) {
+                best = Some((Exe::Bundled, v));
+            }
+        }
         best
+    }
+
+    /// The file to start: the one this build carries is written out first, once.
+    fn exe_path(&self, exe: &Exe) -> Result<PathBuf> {
+        match exe {
+            Exe::File(p) => Ok(p.clone()),
+            #[cfg(feature = "bundled")]
+            Exe::Bundled => {
+                let dir = self.b.bundled_dir.clone().ok_or(Error::NotInstalled)?;
+                Ok(write_bundled(&dir)?)
+            }
+            #[cfg(not(feature = "bundled"))]
+            Exe::Bundled => Err(Error::NotInstalled),
+        }
     }
 
     /// Makes sure there is a connection, to the newest Seek this program knows of.
@@ -252,7 +308,7 @@ impl Seek {
         if conn.is_some() {
             return Ok(());
         }
-        let mut best: Option<Option<(PathBuf, Version)>> = None;  // looked for once, when needed
+        let mut best: Option<Option<(Exe, Version)>> = None;  // looked for once, when needed
         for attempt in 0..3 {
             match pipe::open(&self.pipe) {
                 Ok(f) => {
@@ -271,7 +327,7 @@ impl Seek {
                                 let _ = self.ask_on(conn, "stop", &Args::new());
                                 *conn = None;
                                 pipe::wait_gone(&self.pipe);
-                                pipe::start(&exe, self.b.home.as_deref())?;
+                                pipe::start(&self.exe_path(&exe)?, self.b.home.as_deref())?;
                                 if !pipe::wait_for(&self.pipe, self.b.wait) {
                                     return Err(Error::DidNotStart);
                                 }
@@ -286,7 +342,7 @@ impl Seek {
                         return Err(Error::NotInstalled);
                     }
                     let (exe, _) = best.get_or_insert_with(|| self.best_exe()).clone().ok_or(Error::NotInstalled)?;
-                    pipe::start(&exe, self.b.home.as_deref())?;
+                    pipe::start(&self.exe_path(&exe)?, self.b.home.as_deref())?;
                     if !pipe::wait_for(&self.pipe, self.b.wait) {
                         return Err(Error::DidNotStart);
                     }
@@ -298,7 +354,7 @@ impl Seek {
     }
 
     /// A Seek before protocol 1 is running: replaced by a newer seek.exe when there is one, an error otherwise.
-    fn too_old(&self, conn: &mut Option<pipe::Conn>, version: Option<&str>, attempt: usize, best: &mut Option<Option<(PathBuf, Version)>>) -> Result<()> {
+    fn too_old(&self, conn: &mut Option<pipe::Conn>, version: Option<&str>, attempt: usize, best: &mut Option<Option<(Exe, Version)>>) -> Result<()> {
         let version = version.unwrap_or("unknown").to_string();
         let b = best.get_or_insert_with(|| self.best_exe()).clone();
         match b {
@@ -306,7 +362,7 @@ impl Seek {
                 let _ = self.ask_on(conn, "__stop", &Args::new());  // the name older Seeks know
                 *conn = None;
                 pipe::wait_gone(&self.pipe);
-                pipe::start(&exe, self.b.home.as_deref())?;
+                pipe::start(&self.exe_path(&exe)?, self.b.home.as_deref())?;
                 if !pipe::wait_for(&self.pipe, self.b.wait) {
                     return Err(Error::DidNotStart);
                 }
@@ -453,6 +509,36 @@ impl Seek {
         pipe::wait_gone(&self.pipe);
         r.map(|_| ())
     }
+}
+
+/// Writes the seek.exe this build carries as `<dir>\seek-<version>.exe`, unless it is there already (the same bytes),
+/// through a temporary name, so that no half-written seek.exe is ever started. The other versions there are deleted
+/// when nothing runs them: a running seek.exe can't be.
+#[cfg(feature = "bundled")]
+fn write_bundled(dir: &Path) -> std::io::Result<PathBuf> {
+    let version = BUNDLED_SEEK.unwrap_or("0");
+    let path = dir.join(format!("seek-{version}.exe"));
+    let same = |p: &Path| std::fs::read(p).map(|b| b.len() == BUNDLED_EXE.len() && sha256::hex(&b) == sha256::hex(BUNDLED_EXE)).unwrap_or(false);
+    if !same(&path) {
+        std::fs::create_dir_all(dir)?;
+        let part = dir.join(format!("seek-{version}.exe.{}.part", std::process::id()));
+        std::fs::write(&part, BUNDLED_EXE)?;
+        if let Err(e) = std::fs::rename(&part, &path) {
+            let _ = std::fs::remove_file(&part);
+            if !same(&path) {
+                return Err(e); // another program wrote it meanwhile, or it runs: either way it must be whole
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if name.starts_with("seek-") && (name.ends_with(".exe") || name.ends_with(".part")) && e.path() != path {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    Ok(path)
 }
 
 // ---- requests and their answers

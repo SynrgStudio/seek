@@ -53,6 +53,7 @@ fn user_name() -> String {
 /// A connection to the pipe, opened for overlapped I/O: every read and write waits at most until a deadline, and is
 /// cancelled then (PROTOCOL.md, "Timeouts"). std's File can't stop waiting on a pipe.
 #[derive(Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct Conn {
     pipe: isize,
     event: isize,

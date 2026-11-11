@@ -57,8 +57,38 @@ If Seek isn't installed and your program doesn't carry it, `connect` answers `Er
 
 Errors from Seek carry a [`Code`](https://docs.rs/seek-client): `NotFound`, `BadArgs`, `IndexLoading`… The protocol underneath is [PROTOCOL.md](https://github.com/SynrgStudio/seek/blob/main/PROTOCOL.md), version 1. This crate's version follows the protocol: `1.x` speaks protocol 1, with any Seek from 0.5.0 on.
 
+## Bundled
+
+For a program that must work where Seek isn't installed, the `bundled` feature carries Seek inside it:
+
+```toml
+seek-client = { version = "1", features = ["bundled"] }
+```
+
+**When it builds,** `build.rs` downloads the `seek.exe` of one Seek release and checks it against that release's SHA-256, both written in `build.rs`. Which release that is, [`BUNDLED_SEEK`](https://docs.rs/seek-client) says, for an About box.
+
+- The download uses `curl.exe`, which Windows has had since 2018, or else PowerShell.
+- To build without network, set `SEEK_CLIENT_EXE` to that `seek.exe`. It is checked against the same hash.
+- A `seek.exe` that isn't the release's is never built in.
+
+**When it runs,** the Seek it carries is one more candidate in the rule for starting Seek:
+
+- The newest is started. At the same version, the installed one wins.
+- The one it carries is written to disk only when it is the one to start, as `%LOCALAPPDATA%\<app>\seek\seek-<version>.exe`, through a temporary name. `Builder::app("myapp")` sets `<app>`; by default it is `seek-client`, shared by every program that carries the same Seek.
+- Older versions there are deleted when nothing runs them.
+- A newer Seek installed later replaces it on its own (see PROTOCOL.md, "Starting Seek").
+
+**What you take on by shipping it:**
+
+- **Seek's license.** Seek is GPL-3.0: a program that ships its binary ships its license and a link to the source of that release, `https://github.com/SynrgStudio/seek/tree/v<version>`. Seek runs as a separate process, so it doesn't change the license of the program's own code.
+- **About 1 MB** more in the program.
+- **No signature.** `seek.exe` isn't signed. SmartScreen doesn't look at a file a program writes, but Windows Defender scans it the first time it runs.
+- **The background process outlives your program,** and its data, in `%LOCALAPPDATA%\Seek`, is shared with an installed Seek and with the user's AI agents. An uninstaller shouldn't delete it.
+
+On other systems the feature builds with nothing inside, and the crate never starts it.
+
 ## Tests
 
-`cargo test` runs against `build\seek.exe` of this repository (or `SEEK_EXE`), as a Seek instance of its own in `%TEMP%`, so the one your agents use is left alone. With `SEEK_OLD_EXE` set to a `seek.exe` before 0.5.0, replacing an older Seek is checked too.
+`cargo test` runs against `build\seek.exe` of this repository (or `SEEK_EXE`), as a Seek instance of its own in `%TEMP%`, so the one your agents use is left alone. With `SEEK_OLD_EXE` set to a `seek.exe` before 0.5.0, replacing an older Seek is checked too. `cargo test --features bundled` also starts the Seek it carries.
 
 Windows only. On other systems the crate builds, and `connect` answers `Error::Unsupported`.

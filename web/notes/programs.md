@@ -27,5 +27,6 @@ The protocol is version 1 [protocol_version], specified in [PROTOCOL.md](https:/
 
 - [Slate](https://github.com/SynrgStudio/slate), a text editor by the same author, uses it for its file finder.
 - **Client packages** are on the roadmap ([issue #27](https://github.com/SynrgStudio/seek/issues/27)).
-  - The Rust client, `seek-client`, is written and tested in the repository (`clients/rust`), but **not published** on crates.io yet.
+  - The Rust client, `seek-client` (MIT OR Apache-2.0), is written and tested in the repository (`clients/rust`), but **not published** on crates.io yet. A program can use it from the repository meanwhile.
+  - Its `bundled` option carries one Seek release's `seek.exe` inside the program, checked against that release's SHA-256, for PCs where Seek isn't installed. It starts it only when no newer Seek is installed, and a newer one installed later replaces it.
   - Python and npm come after it.
