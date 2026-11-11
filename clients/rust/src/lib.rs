@@ -23,7 +23,6 @@ mod json;
 mod pipe;
 
 use std::fmt;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,6 +45,9 @@ pub enum Error {
     NotInstalled,
     /// seek.exe was started but its pipe didn't appear in time.
     DidNotStart,
+    /// Seek didn't answer within the time its command can take (PROTOCOL.md, "Timeouts"). The connection is dropped;
+    /// the next request opens a new one.
+    TimedOut,
     /// The Seek running is older than protocol 1 (before 0.5.0), and there is no newer seek.exe to start instead.
     TooOld {
         /// Its version.
@@ -110,6 +112,7 @@ impl fmt::Display for Error {
             Error::Unsupported => write!(f, "Seek runs only on Windows"),
             Error::NotInstalled => write!(f, "Seek isn't running, and there is no seek.exe to start"),
             Error::DidNotStart => write!(f, "seek.exe was started, but its pipe didn't appear"),
+            Error::TimedOut => write!(f, "Seek didn't answer in time"),
             Error::TooOld { version } => write!(f, "the Seek running ({version}) is older than 0.5.0, the first with protocol 1"),
             Error::Seek { message, .. } => write!(f, "{message}"),
             Error::Io(e) => write!(f, "talking to Seek: {e}"),
@@ -140,6 +143,7 @@ pub struct Builder {
     home: Option<PathBuf>,
     start: bool,
     wait: Duration,
+    timeout: Option<Duration>,
 }
 
 impl Default for Builder {
@@ -151,6 +155,7 @@ impl Default for Builder {
             home: std::env::var_os("SEEK_HOME").filter(|h| !h.is_empty()).map(PathBuf::from),
             start: true,
             wait: Duration::from_secs(15),
+            timeout: None,
         }
     }
 }
@@ -188,6 +193,13 @@ impl Builder {
         self.wait = limit;
         self
     }
+    /// How long to wait for any reply. By default each command waits as long as it can take (PROTOCOL.md,
+    /// "Timeouts"): 5 s for hello, status and opened, 45 s for find and recent, and for grep three times its time
+    /// budget and 15 s.
+    pub fn timeout(mut self, limit: Duration) -> Self {
+        self.timeout = Some(limit);
+        self
+    }
     /// Connects, starting Seek when needed (PROTOCOL.md, "Starting Seek").
     pub fn connect(self) -> Result<Seek> {
         if !cfg!(windows) {
@@ -208,7 +220,7 @@ impl Builder {
 pub struct Seek {
     b: Builder,
     pipe: String,
-    conn: Mutex<Option<File>>,
+    conn: Mutex<Option<pipe::Conn>>,
 }
 
 impl Seek {
@@ -236,7 +248,7 @@ impl Seek {
     }
 
     /// Makes sure there is a connection, to the newest Seek this program knows of.
-    fn ensure(&self, conn: &mut Option<File>) -> Result<()> {
+    fn ensure(&self, conn: &mut Option<pipe::Conn>) -> Result<()> {
         if conn.is_some() {
             return Ok(());
         }
@@ -286,7 +298,7 @@ impl Seek {
     }
 
     /// A Seek before protocol 1 is running: replaced by a newer seek.exe when there is one, an error otherwise.
-    fn too_old(&self, conn: &mut Option<File>, version: Option<&str>, attempt: usize, best: &mut Option<Option<(PathBuf, Version)>>) -> Result<()> {
+    fn too_old(&self, conn: &mut Option<pipe::Conn>, version: Option<&str>, attempt: usize, best: &mut Option<Option<(PathBuf, Version)>>) -> Result<()> {
         let version = version.unwrap_or("unknown").to_string();
         let b = best.get_or_insert_with(|| self.best_exe()).clone();
         match b {
@@ -308,7 +320,7 @@ impl Seek {
     }
 
     /// One request on the connection there is: the reply, or Seek's error.
-    fn ask_on(&self, conn: &mut Option<File>, tool: &str, args: &Args) -> Result<Value> {
+    fn ask_on(&self, conn: &mut Option<pipe::Conn>, tool: &str, args: &Args) -> Result<Value> {
         let v = self.reply_on(conn, tool, args)?;
         if v.bool("error") == Some(true) {
             return Err(Error::Seek {
@@ -320,7 +332,7 @@ impl Seek {
     }
 
     /// One request on the connection there is: the reply as it came, an error in it included.
-    fn reply_on(&self, conn: &mut Option<File>, tool: &str, args: &Args) -> Result<Value> {
+    fn reply_on(&self, conn: &mut Option<pipe::Conn>, tool: &str, args: &Args) -> Result<Value> {
         let f = conn.as_mut().ok_or_else(|| Error::Protocol("not connected".into()))?;
         let mut req = format!("{{\"api\":{PROTOCOL},\"build\":");
         json::quote(&format!("0.0.0 {}", self.b.client), &mut req);
@@ -329,9 +341,13 @@ impl Seek {
         req.push_str(",\"args\":");
         args.write(&mut req);
         req.push('}');
-        let reply = pipe::exchange(f, req.as_bytes()).map_err(|e| {
-            *conn = None;
-            Error::Io(e)
+        let reply = pipe::exchange(f, req.as_bytes(), self.b.timeout.unwrap_or_else(|| args.limit(tool))).map_err(|e| {
+            *conn = None; // half a reply may still come: this connection can't be trusted any more
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                Error::TimedOut
+            } else {
+                Error::Io(e)
+            }
         })?;
         let text = String::from_utf8(reply).map_err(|_| Error::Protocol("not UTF-8".into()))?;
         json::parse(&text).ok_or_else(|| Error::Protocol(text.chars().take(200).collect()))
@@ -473,6 +489,20 @@ impl Args {
     }
     fn num(self, k: &'static str, v: u64) -> Self {
         self.set(k, Arg::Num(v))
+    }
+    /// How long a command can take, at most (PROTOCOL.md, "Timeouts").
+    fn limit(&self, tool: &str) -> Duration {
+        match tool {
+            "find.rows" | "recent.rows" => Duration::from_secs(45),
+            "grep.rows" => {
+                let budget = self.0.iter().find_map(|(k, v)| match (k, v) {
+                    (&"time_budget_ms", Arg::Num(n)) => Some((*n).clamp(500, 60_000)),
+                    _ => None,
+                });
+                Duration::from_millis(3 * budget.unwrap_or(6_000) + 15_000)
+            }
+            _ => Duration::from_secs(5),
+        }
     }
     fn write(&self, out: &mut String) {
         out.push('{');

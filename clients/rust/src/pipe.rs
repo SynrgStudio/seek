@@ -1,7 +1,6 @@
 //! The pipe to Seek's background process, and starting it (PROTOCOL.md, "Transport" and "Starting Seek").
 
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -51,16 +50,138 @@ fn user_name() -> String {
     String::new()
 }
 
-/// Opens the pipe. While every instance is busy (another call connected a moment ago), it tries again for a while.
-pub(crate) fn open(name: &str) -> io::Result<File> {
-    let started = Instant::now();
-    loop {
-        match std::fs::OpenOptions::new().read(true).write(true).open(name) {
-            Ok(f) => return Ok(f),
-            Err(e) if e.raw_os_error() == Some(231) && started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(e),
+/// A connection to the pipe, opened for overlapped I/O: every read and write waits at most until a deadline, and is
+/// cancelled then (PROTOCOL.md, "Timeouts"). std's File can't stop waiting on a pipe.
+#[derive(Debug)]
+pub(crate) struct Conn {
+    pipe: isize,
+    event: isize,
+}
+
+#[cfg(windows)]
+mod win {
+    pub(super) type Handle = isize;
+    #[repr(C)]
+    pub(super) struct Overlapped {
+        pub internal: usize,
+        pub internal_high: usize,
+        pub offset: u32,
+        pub offset_high: u32,
+        pub event: Handle,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub(super) fn CreateFileW(name: *const u16, access: u32, share: u32, sa: *const core::ffi::c_void, disposition: u32, flags: u32, template: Handle) -> Handle;
+        pub(super) fn CreateEventW(sa: *const core::ffi::c_void, manual: i32, initial: i32, name: *const u16) -> Handle;
+        pub(super) fn ReadFile(h: Handle, buf: *mut u8, len: u32, read: *mut u32, ov: *mut Overlapped) -> i32;
+        pub(super) fn WriteFile(h: Handle, buf: *const u8, len: u32, written: *mut u32, ov: *mut Overlapped) -> i32;
+        pub(super) fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
+        pub(super) fn GetOverlappedResult(h: Handle, ov: *mut Overlapped, n: *mut u32, wait: i32) -> i32;
+        pub(super) fn CancelIoEx(h: Handle, ov: *mut Overlapped) -> i32;
+        pub(super) fn CloseHandle(h: Handle) -> i32;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Conn {
+    fn drop(&mut self) {
+        // SAFETY: handles this Conn opened, closed once.
+        unsafe {
+            win::CloseHandle(self.pipe);
+            win::CloseHandle(self.event);
         }
     }
+}
+
+#[cfg(windows)]
+impl Conn {
+    /// One read or write, waiting at most until the deadline; cancelled and an error then.
+    fn io(&mut self, write: bool, buf: *mut u8, len: u32, deadline: Instant) -> io::Result<u32> {
+        use win::*;
+        let mut ov = Overlapped { internal: 0, internal_high: 0, offset: 0, offset_high: 0, event: self.event };
+        let mut n = 0u32;
+        // SAFETY: buf is valid for len bytes until the operation is over: it is waited for below, cancelled or not.
+        let started = unsafe { if write { WriteFile(self.pipe, buf, len, std::ptr::null_mut(), &mut ov) } else { ReadFile(self.pipe, buf, len, std::ptr::null_mut(), &mut ov) } };
+        if started == 0 {
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() != Some(997) && e.raw_os_error() != Some(234) {
+                return Err(e); // not ERROR_IO_PENDING (nor ERROR_MORE_DATA: a message read in parts)
+            }
+        }
+        let left = deadline.saturating_duration_since(Instant::now()).as_millis().min(u32::MAX as u128 - 1) as u32;
+        // SAFETY: the event belongs to this Conn; ov lives until the operation is over.
+        unsafe {
+            if WaitForSingleObject(self.event, left) == 258 {
+                // WAIT_TIMEOUT: cancelled, and waited for, so that nothing writes into buf afterwards
+                CancelIoEx(self.pipe, &mut ov);
+                GetOverlappedResult(self.pipe, &mut ov, &mut n, 1);
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Seek didn't answer in time"));
+            }
+            if GetOverlappedResult(self.pipe, &mut ov, &mut n, 0) == 0 {
+                let e = io::Error::last_os_error();
+                if e.raw_os_error() != Some(234) {
+                    return Err(e);
+                }
+            }
+        }
+        if n == 0 && len > 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Seek closed the connection"));
+        }
+        Ok(n)
+    }
+
+    fn write_all(&mut self, mut buf: &[u8], deadline: Instant) -> io::Result<()> {
+        while !buf.is_empty() {
+            let n = self.io(true, buf.as_ptr() as *mut u8, buf.len().min(1 << 20) as u32, deadline)? as usize;
+            buf = &buf[n..];
+        }
+        Ok(())
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8], deadline: Instant) -> io::Result<()> {
+        let mut at = 0;
+        while at < buf.len() {
+            at += self.io(false, buf[at..].as_mut_ptr(), (buf.len() - at).min(1 << 20) as u32, deadline)? as usize;
+        }
+        Ok(())
+    }
+}
+
+/// Opens the pipe. While every instance is busy (another call connected a moment ago), it tries again for a while.
+#[cfg(windows)]
+pub(crate) fn open(name: &str) -> io::Result<Conn> {
+    use win::*;
+    let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+    let started = Instant::now();
+    loop {
+        const READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
+        const OPEN_EXISTING: u32 = 3;
+        const OVERLAPPED: u32 = 0x4000_0000;
+        // SAFETY: wide is NUL-terminated; no security attributes, no template.
+        let pipe = unsafe { CreateFileW(wide.as_ptr(), READ_WRITE, 0, std::ptr::null(), OPEN_EXISTING, OVERLAPPED, 0) };
+        if pipe != -1 {
+            // SAFETY: an unnamed, manual-reset event.
+            let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+            if event == 0 {
+                let e = io::Error::last_os_error();
+                // SAFETY: the pipe just opened.
+                unsafe { CloseHandle(pipe) };
+                return Err(e);
+            }
+            return Ok(Conn { pipe, event });
+        }
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() == Some(231) && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        return Err(e);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open(_name: &str) -> io::Result<Conn> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Seek runs only on Windows"))
 }
 
 /// Whether the pipe is there at all.
@@ -71,17 +192,24 @@ pub(crate) fn exists(name: &str) -> bool {
     }
 }
 
-/// One request and its reply: a 4-byte little-endian length and that many bytes, each way.
-pub(crate) fn exchange(f: &mut File, request: &[u8]) -> io::Result<Vec<u8>> {
+/// One request and its reply: a 4-byte little-endian length and that many bytes, each way; all of it within limit.
+#[cfg(windows)]
+pub(crate) fn exchange(c: &mut Conn, request: &[u8], limit: Duration) -> io::Result<Vec<u8>> {
+    let deadline = Instant::now() + limit;
     let mut msg = Vec::with_capacity(request.len() + 4);
     msg.extend_from_slice(&(request.len() as u32).to_le_bytes());
     msg.extend_from_slice(request);
-    f.write_all(&msg)?;
+    c.write_all(&msg, deadline)?;
     let mut len = [0u8; 4];
-    f.read_exact(&mut len)?;
+    c.read_exact(&mut len, deadline)?;
     let mut reply = vec![0u8; u32::from_le_bytes(len) as usize];
-    f.read_exact(&mut reply)?;
+    c.read_exact(&mut reply, deadline)?;
     Ok(reply)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn exchange(_c: &mut Conn, _request: &[u8], _limit: Duration) -> io::Result<Vec<u8>> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Seek runs only on Windows"))
 }
 
 /// The version a seek.exe says it is (`seek.exe --version` prints "seek X.Y.Z").
@@ -140,7 +268,6 @@ pub(crate) fn start(exe: &Path, home: Option<&Path>) -> io::Result<()> {
     extern "system" {
         fn CreateProcessW(app: *const u16, cmd: *mut u16, pa: *const core::ffi::c_void, ta: *const core::ffi::c_void, inherit: i32, flags: u32,
                           env: *const core::ffi::c_void, dir: *const u16, si: *mut StartupInfo, pi: *mut ProcessInfo) -> i32;
-        fn CloseHandle(h: *mut core::ffi::c_void) -> i32;
     }
     // the environment, as this program has it: with SEEK_HOME set for a home of its own, and without it otherwise
     let mut vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| !k.eq_ignore_ascii_case("SEEK_HOME")).collect();
@@ -181,8 +308,8 @@ pub(crate) fn start(exe: &Path, home: Option<&Path>) -> io::Result<()> {
         if ok != 0 {
             // SAFETY: handles CreateProcessW just gave.
             unsafe {
-                CloseHandle(pi.thread);
-                CloseHandle(pi.process);
+                win::CloseHandle(pi.thread as isize);
+                win::CloseHandle(pi.process as isize);
             }
             return Ok(());
         }

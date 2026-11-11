@@ -191,6 +191,25 @@ No args. `text` is `stopping`.
 
 A later version may add codes. A program treats a code it doesn't know as `failed`.
 
+## Timeouts
+
+Seek answers every request, but a client shouldn't wait forever on a reply. The background process could hang, or be killed halfway through writing. These limits cover the slowest legitimate answer:
+
+| command | wait at most | why it can take that long |
+|---|---|---|
+| `hello`, `opened`, `stop`, `status.rows` | 5 s | they touch neither the index nor the disk's folders |
+| `find.rows`, `recent.rows` | 45 s | right after Seek starts, they wait for the indexes to load (up to 30 s on a slow disk) and for the drives' change journals to be read (up to 10 s). Otherwise they answer in milliseconds |
+| `grep.rows` | 3 × `time_budget_ms` + 15 s (33 s by default) | a literal search that finds nothing is tried again ignoring case, and as a regex, each within the budget |
+
+**How to stop waiting.** Two ways:
+
+- **Overlapped I/O.** Open the pipe with `FILE_FLAG_OVERLAPPED`, wait on the read with a timeout (`WaitForSingleObject` on its event, or `GetOverlappedResultEx`), and on timeout call `CancelIoEx`.
+- **A reading thread.** If the read already runs on a thread of its own, call `CancelSynchronousIo` on that thread from another one.
+
+**After a timeout, close that connection and open a new one.** The old reply may still arrive, half read, and the stream can't be trusted any more. The request itself keeps running in Seek until it ends, which does no harm.
+
+If `hello` on the new connection doesn't answer within its 5 s either, the background process is stuck. Tell the user, and leave it running: killing it loses what it saw change since its last save, at most 5 minutes.
+
 ## Starting Seek
 
 Seek's background process (`seek.exe --daemon`) serves every program and AI agent of the user: one index, one history, and it keeps running after the program that started it closes. It isn't started with Windows: the first client that needs it starts it.

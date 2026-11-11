@@ -32,6 +32,7 @@ This crate is a client, as a database driver is: it doesn't hold an index of its
 - **One index for everyone.** Every program and AI agent on the PC shares one index of every drive. The drive watchers keep it current, even while your program is closed.
 - **The cost.** Your program pays about 0.1 ms per request on the pipe. The search itself takes 20 to 50 ms on millions of names.
 - **No dependencies.** Nothing but the standard library.
+- **It never waits forever.** Each reply has a time limit, as long as its command can take (PROTOCOL.md, "Timeouts"); past it the request fails with `Error::TimedOut`, and the next one opens a new connection. `Builder::timeout` sets one limit for all.
 
 `Seek::connect` follows Seek's rule for starting it:
 
