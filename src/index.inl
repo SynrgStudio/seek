@@ -362,16 +362,18 @@ bool InScope(const Volume& v, uint32_t i, uint32_t scope, uint8_t scopeDepth) {
 }
 
 // ---- a name query: words are fuzzy (all of them must match), ".png" or "ext:png,jpg" the extension, "!word" leaves
-// out names with it, "*" and "?" are wildcards on the name, "type:file|folder", and anything with a slash must be in
-// the path.
+// out names with it, "*" and "?" are wildcards on the name, "{a,b c}" alone one of those in the name as typed,
+// "type:file|folder", and anything with a slash must be in the path.
 
 struct NameQuery {
     std::vector<std::wstring> words, exts, notWords, pathParts;
     std::vector<std::vector<std::wstring>> globs;  // one of each group must match: "*.{ts,tsx}" is a group of two
     std::vector<std::wstring> phrases;  // "in quotes": in the name as typed, whole words (they are among the words too)
+    std::vector<std::vector<std::wstring>> anyPhrases;  // "{alpha,beta gamma}": one of each group in the name, as phrases are
     int kind = 0;  // 1 folders, 2 files
     std::wstring text;
-    bool Empty() const { return words.empty() && exts.empty() && globs.empty() && pathParts.empty(); }
+    bool Empty() const { return words.empty() && exts.empty() && globs.empty() && anyPhrases.empty() && pathParts.empty(); }
+    bool Names() const { return !words.empty() || !exts.empty() || !globs.empty() || !anyPhrases.empty(); }  // says what, not only where
 };
 
 std::vector<std::wstring> ExpandBraces(const std::wstring& g);
@@ -382,13 +384,16 @@ NameQuery ParseNameQuery(const std::wstring& q) {
     std::vector<std::pair<std::wstring, bool>> tokens;  // and whether it was in quotes
     std::wstring cur;
     bool quoted = false, hadQuotes = false;
+    int braces = 0;  // a space inside {...} is part of an alternative: "{alpha,beta gamma}"
     for (wchar_t c : q) {
         if (c == L'"') {
             quoted = !quoted;
             hadQuotes = true;
             continue;
         }
-        if (iswspace(c) && !quoted) {
+        if (c == L'{') ++braces;
+        if (c == L'}' && braces > 0) --braces;
+        if (iswspace(c) && !quoted && braces == 0) {
             if (!cur.empty()) tokens.push_back({cur, hadQuotes});
             cur.clear();
             hadQuotes = false;
@@ -433,7 +438,16 @@ NameQuery ParseNameQuery(const std::wstring& q) {
             l = l.substr(cut + 1);
             if (l.empty()) continue;
         }
-        if (l.size() > 1 && l[0] == L'.' && l.find_first_of(L".*?{", 1) == std::wstring::npos) out.exts.push_back(l);
+        // Only braces, and no wildcard in them: names with one of those in them, as typed. As a wildcard it would have to
+        // be the whole name, and "{report,summary} .pdf" would find nothing.
+        const bool group = l.size() > 2 && l.front() == L'{' && l.back() == L'}' && l.find_first_of(L"*?[") == std::wstring::npos;
+        std::vector<std::wstring> alts;
+        if (group) {
+            alts = ExpandBraces(l);
+            alts.erase(std::remove_if(alts.begin(), alts.end(), [](const std::wstring& a) { return a.empty() || a.find_first_of(L"{}") != std::wstring::npos; }), alts.end());
+        }
+        if (!alts.empty()) out.anyPhrases.push_back(alts);
+        else if (l.size() > 1 && l[0] == L'.' && l.find_first_of(L".*?{", 1) == std::wstring::npos) out.exts.push_back(l);
         else if (l.find_first_of(L"*?{") != std::wstring::npos) out.globs.push_back(ExpandBraces(l));
         else {
             out.words.push_back(l);  // fuzzy, for the score; in quotes, also as typed
@@ -545,7 +559,7 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
         if (!FuzzyMatch(name, n, w, s, nullptr)) return false;
         score += s;
     }
-    if (!q.notWords.empty() || !q.globs.empty() || !q.phrases.empty()) {
+    if (!q.notWords.empty() || !q.globs.empty() || !q.phrases.empty() || !q.anyPhrases.empty()) {
         lowerBuf.assign(name, n);
         bool plain = true;  // nearly every name: no call needed to lower it
         for (wchar_t& ch : lowerBuf) {
@@ -560,6 +574,11 @@ bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int&
             if (!HasPhrase(lowerBuf, p)) return false;
         for (const std::wstring& w : q.notWords)
             if (lowerBuf.find(w) != std::wstring::npos) return false;
+        for (const auto& any : q.anyPhrases) {
+            bool ok = false;
+            for (const std::wstring& p : any) ok = ok || HasPhrase(lowerBuf, p);
+            if (!ok) return false;
+        }
         for (const auto& any : q.globs) {  // one of each group
             bool ok = false;
             for (const std::wstring& g : any) ok = ok || GlobMatch(g.c_str(), lowerBuf.c_str());

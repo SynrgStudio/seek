@@ -143,7 +143,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     if (type == L"file" || type == L"files") q.kind = 2;
     if (type == L"folder" || type == L"folders" || type == L"dir") q.kind = 1;
     if (q.Empty() && q.kind == 0) return {L"That query only leaves things out: add a name, an extension or a wildcard.", true};
-    if (q.words.empty() && q.exts.empty() && q.globs.empty() && !q.pathParts.empty())
+    if (!q.Names() && !q.pathParts.empty())
         return {L"\"" + query + L"\" says where to look, not what: add a name, an extension or a wildcard after the slash, like \"" + query + L"report\" or \"" +
                     query + L"*.md\".",
                 true};
