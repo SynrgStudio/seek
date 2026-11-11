@@ -866,6 +866,9 @@ ToolOut ToolRecent(const Json& a, bool rows = false) {
     const bool system = ArgBool(a, "include_system", false);
     const std::wstring scopeKey = Key(scope);
     LoadUsage();
+    // Right after the background process starts: what the last run saw is read with the index, and catching up with
+    // the drives' journals only starts after that. Waiting for the second alone answered from nothing.
+    WaitIndex(30000);
     WaitCatchUp(10000);
     struct Item {
         std::wstring path;
