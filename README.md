@@ -155,6 +155,7 @@ These answer in rows, for a program that lists them itself; they aren't written 
 | `__grep_rows` | as `grep` (`pattern`, `path`, `regex`, `case`, `glob`, `ignored`...), `limit` (2,000) and `per_file` (100) | `#rows`, files with matches, matching lines, `1` when not all are listed, and `asked`, `nocase` or `regex` (how it searched); then the path, the line, the column and the line's text, tab-separated |
 | `__recent_rows` | as `recent` (`path`, `query`, `since`, `limit` (1,000)), and `walk: false` for only what Seek saw change, without reading the dates on disk | `#rows`, how many, `1` when that is all; then `D` or `F`, the path, the time in Unix seconds, and `created`, `changed`, `renamed` or `opened` |
 | `__opened` | `path` | `ok`: the file ranks as used in `find`, and `recent` lists it as opened |
+| `__status_rows` | none | `#rows`, Seek's version and how many drives; then one line per drive: the letter, `loading` (Seek has just started), `indexing` (its first index is being made), `ready` or `none`, how many names (so far, while indexing), `jolt` or `own` (whose index), and when it was taken in Unix seconds (0 when there is none yet). Without Jolt, how many names a drive has is known only at the end, so there is no percentage |
 
 ```json
 {"build": "0.0.0 myapp", "tool": "__rows", "max": 5000, "args": {"query": "report .pdf"}}

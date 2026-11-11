@@ -995,6 +995,37 @@ const uint64_t g_started = GetTickCount64();
 
 std::wstring AgoTick(uint64_t tick) { return Ago(NowFt() - static_cast<int64_t>(GetTickCount64() - tick) * 10000); }
 
+// The index of each drive, for a program to show while the first one is made (the pipe's __status_rows): a line
+// "#rows", this version and how many drives; then one per drive: its letter, loading (the background process has just
+// started and is reading the indexes), indexing (the first index is being made: the names so far), ready or none,
+// how many names, jolt or own (whose index it is), and when it was taken in Unix seconds (0 when there is none yet).
+std::wstring StatusRows() {
+    const std::vector<wchar_t> drives = FixedDrives();
+    const auto vols = Volumes();
+    std::wstring out = L"#rows\t" SEEK_VERSION L"\t" + std::to_wstring(drives.size()) + L"\n";
+    for (const wchar_t c : drives) {
+        std::shared_ptr<const Volume> v;
+        for (const auto& x : vols)
+            if (x->letter == c) v = x;
+        std::wstring state = L"none", source = L"own";
+        uint64_t names = 0;
+        int64_t taken = 0;
+        if (!g_indexReady) {
+            state = L"loading";
+        } else if (g_indexing & (1u << (c - L'A'))) {
+            state = L"indexing";
+            names = g_indexed[c - L'A'];
+        } else if (v) {
+            state = L"ready";
+            names = v->count;
+            taken = (v->stamp - 116444736000000000LL) / 10000000;
+        }
+        if (JoltHas(c)) source = L"jolt";
+        out += std::wstring(1, c) + L"\t" + state + L"\t" + std::to_wstring(names) + L"\t" + source + L"\t" + std::to_wstring(std::max<int64_t>(0, taken)) + L"\n";
+    }
+    return out;
+}
+
 std::wstring StatusText() {
     std::wstring out = L"Seek " SEEK_VERSION L", background process " + std::to_wstring(GetCurrentProcessId()) + L", started " + AgoTick(g_started) + L", " +
                        Thousands(g_calls) + (g_calls == 1 ? L" call served" : L" calls served") + (g_calls ? L", the last " + AgoTick(g_lastCall) : L"") + L".\n";

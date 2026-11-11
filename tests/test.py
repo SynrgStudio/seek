@@ -608,6 +608,11 @@ t = r.get("text", "")
 check("recent rows: a count, then kind, path, Unix time and what happened; a file opened is opened",
       t.startswith("#rows\t") and re.search(r"F\t" + re.escape(REPO + "\\notes\\plan.md") + r"\t1[0-9]{9}\topened", t) is not None, t[:400])
 shutil.rmtree(os.path.join(S, "slate"))
+r = pipe_call("0.0.0 slate", "__status_rows")
+t = r.get("text", "").split("\n")
+check("status rows: the version, then a drive per line with its state, names, source and time",
+      t[0].startswith("#rows\t" + r.get("version", "?") + "\t") and int(t[0].split("\t")[2]) == len([l for l in t[1:] if l]) >= 1 and
+      all(re.fullmatch(r"[A-Z]\t(loading|indexing|ready|none)\t[0-9]+\t(jolt|own)\t[0-9]+", l) for l in t[1:] if l), r.get("text", "")[:400])
 out = stats()
 check("rows: a program's own searches aren't counted as an agent's", re.search(today + r"\s+find\s+1\s", out) is not None, out)
 r = pipe_call("0.0.1 Jan  1 2026 00:00:00", "__tools")

@@ -152,6 +152,8 @@ void Serve(HANDLE pipe) {
             reply = R"({"text":"not this one"})";  // seek --stop here, from another seek.exe (a build): this one keeps running
         } else if (tool && tool->s == "__status") {  // seek --status, from any build
             reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
+        } else if (tool && tool->s == "__status_rows") {  // the indexes, for a program to show (Slate, while the first is made)
+            reply = "{\"text\":" + JsonQuote(Utf8(StatusRows())) + ",\"version\":\"" SEEK_VERSION "\"}";
         } else if (tool && tool->s == "__stats") {  // seek --stats
             const Json* days = j.at("days");
             reply = "{\"text\":" + JsonQuote(Utf8(StatsText(days && days->kind == Json::Num ? std::max(1, static_cast<int>(days->n)) : 14))) + "}";
