@@ -562,10 +562,11 @@ bool GlobMatch(const wchar_t* p, const wchar_t* s) {
 bool NameMatch(const NameQuery& q, const wchar_t* name, size_t n, bool dir, int& score, std::wstring& lowerBuf, int* rank = nullptr) {
     if ((q.kind == 1 && !dir) || (q.kind == 2 && dir)) return false;
     if (!q.exts.empty()) {
-        if (dir) return false;
+        // A file with that extension, or a file or folder with exactly that name: ".gitignore", and ".git" or
+        // ".vscode", which are folders. An extension alone never matches a folder ("report.d" isn't a .d file).
         bool ok = false;
-        for (const std::wstring& e : q.exts)  // n == e.size(): the dotfile itself, .gitignore for ".gitignore"
-            if (n >= e.size() && _wcsnicmp(name + n - e.size(), e.c_str(), e.size()) == 0) ok = true;
+        for (const std::wstring& e : q.exts)
+            if (n == e.size() ? _wcsnicmp(name, e.c_str(), n) == 0 : !dir && n > e.size() && _wcsnicmp(name + n - e.size(), e.c_str(), e.size()) == 0) ok = true;
         if (!ok) return false;
     }
     score = 0;
