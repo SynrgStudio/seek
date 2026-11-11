@@ -4,11 +4,16 @@ status: stable
 updated: 2026-11-11
 ---
 
-A name's score comes from the fuzzy matching (the same as Jolt's).
+A name's score comes from the fuzzy matching (the same as Jolt's), and then from what Seek knows about the user:
 
-- Contiguous letters, word starts and the start of the name count for more.
-- An exact name counts for more still, and an exact program (`.exe`, `.lnk`) for most.
-- The score is multiplied by 8 and lowered by the name's depth, so of two equal names the shallower one wins.
+$$\text{score} = 8\,(m + r) - \min(d, 40) + \sum b$$
+
+- $m$, the matching: contiguous letters, word starts and the start of the name count for more; letters far apart count for less.
+- $r$, what the name is: 6,000 [rank_exact_program] for a program whose name is exactly what was typed, 4,000 [rank_exact_name] for any name that is exactly it, 2,000 [rank_program] for a program with the word whole in its name; otherwise 0.
+- The 8 is [rank_match_scale]. $d$ is the name's depth, the folders above it, counted up to 40 [rank_depth_max]: of two equal names, the shallower one wins.
+- $\sum b$, the points in the table below, for what the user did.
+
+Close names (a typo) aren't scored this way: they come after every real match, ordered by how close they are.
 
 Then what Seek knows about the user moves the best 2,000 [ranked_results] up or down:
 

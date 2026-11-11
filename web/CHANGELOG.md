@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-11, for the ranking, the index and grep's history
+
+- New facts, read from the source: `rank_match_scale` (8), `rank_depth_max` (40), `rank_exact_program`, `rank_exact_name` and `rank_program`. `notes/ranking.md` now gives the score's formula: $8\,(m + r) - \min(d, 40) + \sum b$. The exact-name and program points are inside the 8, not added after it.
+- New facts for the drives' sizes in the index times: `index_ssd_names_millions`, `index_ssd2_names_millions`, `index_hdd_names_millions`.
+- New table `data/grep_history.json`: grep's history with the times in seconds and the files read as numbers.
+
 ## 2026-11-11, Seek 0.5.1
 
 - `project.version` is 0.5.1.

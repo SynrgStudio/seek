@@ -12,7 +12,7 @@ Every name on every fixed drive, in the format Jolt keeps. Each entry is 12 byte
   - It looks for a newer copy every 10 minutes [jolt_check_min].
   - It copies the file instead of reading it in place, because Jolt replaces the file when it reindexes, and a mapped file would block that.
 - **Without Jolt,** Seek walks each drive itself, on up to 8 [index_walk_threads] threads, with no special rights.
-  - On the benchmark PC: 18 s [index_ssd_s] for 2.1 million names on an NVMe SSD, 3.8 s [index_ssd2_s] for 1.3 million on another, and 19.5 minutes [index_hdd_min] for 1.4 million on a hard disk read cold.
+  - On the benchmark PC: 18 s [index_ssd_s] for 2.1 million [index_ssd_names_millions] names on an NVMe SSD, 3.8 s [index_ssd2_s] for 1.3 million [index_ssd2_names_millions] on another, and 19.5 minutes [index_hdd_min] for 1.4 million [index_hdd_names_millions] on a hard disk read cold.
   - It saves the result and walks the drives again once a day in the background, while the old index keeps answering.
   - While a drive is indexed for the first time, searches on every drive lack its names; a search below a folder there walks the folder.
 - **Between walks,** the drive watchers add what is created and hide what is deleted, so an answer doesn't depend on how old the index is. What was created since is kept between runs too.

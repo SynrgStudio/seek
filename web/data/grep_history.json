@@ -1,0 +1,40 @@
+{
+ "about": "grep over every project (CreateFileW), step by step; the same as history in results.json, with the times in seconds. Written by tools/web_corpus.py.",
+ "steps": [
+  {
+   "step": "The first comparison: it stopped at its 6 s budget",
+   "seconds": 6.0,
+   "files_read": 32700
+  },
+  {
+   "step": "Look for the pattern's bytes before decoding any text",
+   "seconds": 0.96,
+   "files_read": 32700
+  },
+  {
+   "step": "Check privacy by the entry's own name; look .gitignore names up",
+   "seconds": 0.76,
+   "files_read": 32700
+  },
+  {
+   "step": "List folders on 12 threads",
+   "seconds": 0.73,
+   "files_read": 32700
+  },
+  {
+   "step": "Read only the first 8 KB of a binary",
+   "seconds": 0.35,
+   "files_read": 32700
+  },
+  {
+   "step": "Follow .git\\info\\exclude and the global excludes, as git does",
+   "seconds": 0.132,
+   "files_read": 10700
+  },
+  {
+   "step": "Keep the folder in memory, current through the drive watchers",
+   "seconds": 0.011,
+   "files_read": null
+  }
+ ]
+}

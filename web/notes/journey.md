@@ -4,7 +4,7 @@ status: stable
 updated: 2026-11-11
 ---
 
-The first comparison found Seek's grep slow on a big folder: it stopped at its budget of 6 s [grep_history_first_s]. Each step after it was measured with the same search, `CreateFileW` over every project. The steps, with their times and how many files each read, are in `data/results.json` under `history`, with the column names in `history_cols`. The last step is 11 ms [grep_history_last_ms].
+The first comparison found Seek's grep slow on a big folder: it stopped at its budget of 6 s [grep_history_first_s]. Each step after it was measured with the same search, `CreateFileW` over every project. The steps, with their times and how many files each read, are in `data/grep_history.json`, the times in seconds (the same as `history` in `data/results.json`, where they are text). The last step is 11 ms [grep_history_last_ms].
 
 What each step did:
 

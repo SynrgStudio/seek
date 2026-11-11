@@ -41,7 +41,7 @@ Everything is as fast at the lookup itself. Most of its time here is starting `e
 | | ready to answer | memory of its own |
 |---|---|---|
 | Seek | 296 ms [start_ms], every drive, from Jolt's index | 328 MB [memory_mb] with every project kept in memory for grep; 32 MB [memory_no_folders_mb] without; one process for every agent |
-| Seek without Jolt | 18 s [index_ssd_s] for 2.1 million names on an NVMe SSD; 3.8 s [index_ssd2_s] for 1.3 million on another; 19.5 min [index_hdd_min] for 1.4 million on a hard disk read cold | the same |
+| Seek without Jolt | 18 s [index_ssd_s] for 2.1 million [index_ssd_names_millions] names on an NVMe SSD; 3.8 s [index_ssd2_s] for 1.3 million [index_ssd2_names_millions] on another; 19.5 min [index_hdd_min] for 1.4 million [index_hdd_names_millions] on a hard disk read cold | the same |
 | Everything | always running, as a service | 493 MB [memory_everything_mb] |
 | fff | 110 ms [start_fff_repo_ms] for the repository, 246 ms [start_fff_projects_ms] for every project (it scans the folder) | 114 MB [memory_fff_repo_mb] for the repository, 201 MB [memory_fff_projects_mb] for every project; one process per agent session and folder |
 

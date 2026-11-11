@@ -179,11 +179,24 @@ m = re.match(r"([\d.]+) s for the ([\d.]+) million names on an NVMe SSD, ([\d.]+
 if not m:
     raise SystemExit("bench/results.json: facts.index_build changed shape; update tools/web_corpus.py")
 fact("index_ssd_s", float(m.group(1)), "s", f"Seek walking a drive itself (no Jolt): {m.group(2)} million names on an NVMe SSD", BENCH)
+fact("index_ssd_names_millions", float(m.group(2)), "million", "the names on that NVMe SSD", BENCH)
 fact("index_ssd2_s", float(m.group(3)), "s", f"the same: {m.group(4)} million names on another SSD", BENCH)
+fact("index_ssd2_names_millions", float(m.group(4)), "million", "the names on that other SSD", BENCH)
 fact("index_hdd_min", float(m.group(5)), "min", f"the same: {m.group(6)} million names on a hard disk, read cold", BENCH)
+fact("index_hdd_names_millions", float(m.group(6)), "million", "the names on that hard disk", BENCH)
 
-# grep's history, every project: the first and the last step
+# grep's history, every project: each step in seconds too (data/grep_history.json), the first and the last as facts
 hist = R["history"]
+
+
+def hist_seconds(text):
+    m = re.fullmatch(r"([\d.]+) (s|ms)", text.strip())
+    if not m:
+        raise SystemExit(f"bench/results.json: a history time reads {text!r}; update tools/web_corpus.py")
+    return float(m.group(1)) * (1 if m.group(2) == "s" else 0.001)
+
+
+HISTORY = [{"step": h[0], "seconds": round(hist_seconds(h[1]), 6), "files_read": None if h[2] in ("none", "") else int(h[2].replace(",", ""))} for h in hist]
 first, last = as_time(float(hist[0][1].split()[0]) * (1 if hist[0][1].endswith(" s") else 0.001)), as_time(float(hist[-1][1].split()[0]) * (1 if hist[-1][1].endswith(" s") else 0.001))
 fact("grep_history_first_s", first[0], first[1], "grep over every project in the first comparison (stopped at its 6 s budget)", BENCH)
 fact("grep_history_last_ms", last[0], last[1], "the same search after the last step of grep's history (data/results.json, history)", BENCH)
@@ -208,6 +221,16 @@ fact("ranked_results", code("src/tools.inl", r"constexpr size_t kRanked = (\d+);
 fact("jolt_check_min", code("src/server.inl", r"if \(tick % (\d+) == 0\)\s*\n\s*for \(wchar_t c : FixedDrives\(\)\) LoadVolume\(c, false\);"),
      "min", "how often Seek looks for a newer copy of Jolt's index (and of its own)", "src/server.inl", None)
 fact("activity_save_min", code("src/server.inl", r"if \(tick % (\d+) == 0\) \{\s*\n\s*ActSave\(\);"), "min", "how often what Seek saw change is saved to disk", "src/server.inl", None)
+fact("rank_match_scale", code("src/tools.inl", r"c.key = sc \* (\d+) - std::min<int>\(depth, \d+\);"), "x",
+     "a name's score is its matching score (with the exact-name and program points) times this, before what Seek knows about the user is added", "src/tools.inl", None)
+fact("rank_depth_max", code("src/tools.inl", r"c.key = sc \* \d+ - std::min<int>\(depth, (\d+)\);"), "points",
+     "a name's depth (folders above it) is taken from its score, up to this", "src/tools.inl", None)
+for key, pat, what in [
+    ("rank_exact_program", r"kExactProgram = (\d+)", "matching points for a program whose name is exactly what was typed (.exe, .lnk, .bat)"),
+    ("rank_exact_name", r"kExactName = (\d+)", "matching points for a name that is exactly what was typed (without its extension, or with it)"),
+    ("rank_program", r"kProgramName = (\d+)", "matching points for a program with the word whole in its name"),
+]:
+    fact(key, code("src/fuzzy.inl", pat), "points", what, "src/fuzzy.inl", None)
 for key, pat, what in [
     ("rank_changed_hour", r"age < kHour \? (\d+) :", "points for a file changed in the last hour"),
     ("rank_changed_day", r"age < kHour \? \d+ : age < kDay \? (\d+) :", "points for one changed in the last day"),
@@ -316,6 +339,9 @@ def main():
     want = {
         os.path.join(WEB, "facts.toml"): facts_toml(),
         os.path.join(WEB, "data", "results.json"): src("bench/results.json"),
+        os.path.join(WEB, "data", "grep_history.json"): json.dumps(
+            {"about": "grep over every project (CreateFileW), step by step; the same as history in results.json, with the times in seconds. Written by tools/web_corpus.py.",
+             "steps": HISTORY}, indent=1, ensure_ascii=False) + "\n",
     }
     stale = []
     for path, text in want.items():
