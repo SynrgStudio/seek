@@ -2,13 +2,14 @@
 // or deleted, with the time, kept between runs in activity.txt. Plus what Jolt knows: the folders used most and the
 // ones opened last. Private places are never recorded.
 
-enum : uint8_t { kCreated = 1, kModified = 2, kDeleted = 3, kRenamed = 4 };
+enum : uint8_t { kCreated = 1, kModified = 2, kDeleted = 3, kRenamed = 4, kOpened = 5 };
 const wchar_t* ActName(uint8_t k) {
     switch (k) {
         case kCreated: return L"created";
         case kModified: return L"changed";
         case kDeleted: return L"deleted";
         case kRenamed: return L"renamed to this";
+        case kOpened: return L"opened";
         default: return L"touched";
     }
 }
@@ -428,10 +429,24 @@ std::shared_ptr<const std::vector<AddedItem>> AddedList() {
 }
 
 // When something was last created, changed or renamed here (0 if not seen, or deleted).
-int64_t LastActivity(const std::wstring& key) {
+int64_t LastActivity(const std::wstring& key, uint8_t* kind = nullptr) {
     std::shared_lock lk(g_actM);
     auto it = g_act.find(key);
-    return it != g_act.end() && it->second.kind != kDeleted ? it->second.time : 0;
+    if (it == g_act.end() || it->second.kind == kDeleted) return 0;
+    if (kind) *kind = it->second.kind;
+    return it->second.time;
+}
+
+// A program said it opened this file (Slate, opening a note): it ranks as used in find, and recent lists it as opened.
+// False when there is no such file.
+bool ActOpened(const std::wstring& path) {
+    if (path.size() < 3 || GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    const std::wstring key = Key(path);
+    if (Private(key) || IsUnder(key, Key(DataDir()))) return true;  // said yes; nothing kept
+    std::lock_guard lk(g_actM);
+    g_act[key] = {path, NowFt(), kOpened};
+    PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });
+    return true;
 }
 
 // Gone since the index was taken: the path itself, or a folder above it (the index still lists what a deleted or

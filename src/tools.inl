@@ -127,6 +127,70 @@ void ForEach(size_t n, F fn) {
     for (auto& x : th) x.join();
 }
 
+// What .gitignore leaves out below a folder, and dependency and cache folders, as grep leaves them out: worked out once
+// per search from the index's folders. A folder's ignore files are read only where the index lists one.
+struct IgnoreMap {
+    uint32_t vol = UINT32_MAX;
+    std::unordered_map<uint32_t, int> chainOf;  // the folders kept below it, and their rules (in chains); not the others
+    std::vector<IgnChain> chains;
+    bool Hides(const Volume& v, uint32_t i) const {  // a name in the index, below the folder
+        const IdxNode& nd = v.node[i];
+        if (nd.dir) return !chainOf.count(i);
+        const auto it = chainOf.find(nd.parent);
+        if (it == chainOf.end()) return true;  // in a folder left out
+        const IgnChain& c = chains[static_cast<size_t>(it->second)];
+        return !c.empty() && Ignored(c, Key(NodePath(v, i)), Lower(std::wstring(v.name + nd.nameOff, nd.nameLen)), false);
+    }
+};
+
+IgnoreMap MakeIgnoreMap(const Volume& v, uint32_t vol, uint32_t root, const std::wstring& rootPath) {
+    IgnoreMap m;
+    m.vol = vol;
+    v.Kids();
+    IgnChain top = IgnoresAbove(rootPath);
+    AddIgnores(rootPath, top);
+    m.chains.push_back(std::move(top));
+    m.chainOf[root] = 0;
+    struct Item {
+        uint32_t node;
+        std::wstring path;
+        int chain;
+    };
+    std::vector<Item> stack{{root, rootPath, 0}};
+    const auto& junk = JunkDirs();
+    auto own = [](const wchar_t* n, size_t len) {  // a name that brings rules of its own
+        for (const wchar_t* r : {L".gitignore", L".ignore", L".git"})
+            if (wcslen(r) == len && _wcsnicmp(n, r, len) == 0) return true;
+        return false;
+    };
+    while (!stack.empty()) {
+        const Item it = std::move(stack.back());
+        stack.pop_back();
+        for (uint32_t k = v.kidStart[it.node]; k < v.kidStart[it.node + 1]; ++k) {
+            const uint32_t c = v.kids[k];
+            const IdxNode& nd = v.node[c];
+            if (!nd.dir) continue;
+            const std::wstring name(v.name + nd.nameOff, nd.nameLen), lower = Lower(name);
+            if (junk.count(lower)) continue;
+            const std::wstring path = Join(it.path, name);
+            const IgnChain& rules = m.chains[static_cast<size_t>(it.chain)];
+            if (!rules.empty() && Ignored(rules, Key(path), lower, true)) continue;
+            int chain = it.chain;
+            bool more = false;
+            for (uint32_t j = v.kidStart[c]; j < v.kidStart[c + 1] && !more; ++j) more = own(v.name + v.node[v.kids[j]].nameOff, v.node[v.kids[j]].nameLen);
+            if (more) {
+                IgnChain next = rules;
+                AddIgnores(path, next);
+                m.chains.push_back(std::move(next));
+                chain = static_cast<int>(m.chains.size() - 1);
+            }
+            m.chainOf[c] = chain;
+            stack.push_back({c, path, chain});
+        }
+    }
+    return m;
+}
+
 // rows: for a program that lists the results itself (Seek's window): that many of the best, as "D" or "F", a tab and
 // the path on each line, after a line "#rows", how many match, 1 when that count is exact, and "real", "near" (close
 // names, a typo) or "scattered". Nothing is read from the drive for them: the program reads what it shows.
@@ -152,7 +216,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     // a folder doesn't need the index: one on a drive without it yet is walked
     if (!WaitIndex(scope.empty() ? 30000 : 3000) && scope.empty()) return {L"The drive index is still loading. Try again in a few seconds.", true};
     WaitCatchUp(10000);
-    const std::wstring building = scope.empty() ? IndexingNote() : L"";
+    std::wstring building = scope.empty() ? IndexingNote() : L"";
     LoadUsage();
     // what was created since the index was taken: all of it, or what is below the folder
     std::shared_ptr<const std::vector<AddedItem>> everything;
@@ -185,6 +249,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             f.key = Key(f.path);
             bool ok = !Private(f.key) && !Removed(f.key);
             for (const std::wstring& p : q.pathParts) ok = ok && f.key.find(p) != std::wstring::npos;
+            for (const std::wstring& p : q.notPaths) ok = ok && !HasPathPart(f.key, p);
             f.key0 = c.key;
             f.rank = c.rank;
             f.percent = c.percent;
@@ -210,18 +275,46 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     auto inParts = [&](const std::wstring& key) {
         for (const std::wstring& p : q.pathParts)
             if (key.find(p) == std::wstring::npos) return false;
+        for (const std::wstring& p : q.notPaths)
+            if (HasPathPart(key, p)) return false;
         return true;
     };
     auto partsOf = [&](const Cand& c) {  // of a name in the index or made since; a walk looks at its own
-        if (q.pathParts.empty() || !indexed) return true;
+        if ((q.pathParts.empty() && q.notPaths.empty()) || !indexed) return true;
         if (c.vol != UINT32_MAX) return inParts(Key(NodePath(*vols[c.vol], c.node)));
         return inParts(added[c.node].key.empty() ? Key(added[c.node].path) : added[c.node].key);
+    };
+    // Below a folder, what .gitignore leaves out there and dependency and cache folders are left out, as grep leaves them
+    // out, unless ignored is true or the folder is itself in one of them. Counted, for the answer to say they are there.
+    const std::wstring scopeKey0 = Key(scope);
+    const std::vector<std::wstring> junkList(JunkDirs().begin(), JunkDirs().end());
+    const bool follow = !scope.empty() && !ArgBool(a, "ignored", false) && !AnySegment(scopeKey0, junkList) && !RepoIgnore().Check(scope, true);
+    IgnoreMap ignoreMap;
+    RepoIgnore oneByOne;  // for names made since the index and for walked folders: asked one at a time, never at once
+    if (follow && indexed)
+        for (uint32_t vi = 0; vi < vols.size(); ++vi) {
+            uint32_t n;
+            if (towupper(scope[0]) == vols[vi]->letter && FindNode(*vols[vi], scope, n)) ignoreMap = MakeIgnoreMap(*vols[vi], vi, n, scope);
+        }
+    std::atomic<uint64_t> hidden{0};
+    auto hides = [&](const Cand& c, bool count) {
+        if (!follow || !indexed) return false;
+        bool h;
+        if (c.vol == UINT32_MAX) {
+            const AddedItem& x = added[c.node];
+            const std::wstring k = x.key.empty() ? Key(x.path) : x.key;
+            h = (k.size() > scopeKey0.size() && AnySegment(k.substr(scopeKey0.size()), junkList)) || oneByOne.Check(x.path, x.dir);
+        } else {
+            h = c.vol == ignoreMap.vol && ignoreMap.Hides(*vols[c.vol], c.node);
+        }
+        if (h && count) hidden.fetch_add(1, std::memory_order_relaxed);
+        return h;
     };
     // letters scattered along a long name match by chance: counted apart, and shown only when nothing better is there
     std::atomic<uint64_t> scattered{0};
     auto realMatch = [&](const wchar_t* name, size_t n, bool dir, uint8_t depth, Cand& c, std::wstring& b) {
         int sc;
-        if (!NameMatch(q, name, n, dir, sc, b, &c.rank) || !partsOf(c)) return false;
+        if (!NameMatch(q, name, n, dir, sc, b, &c.rank) || !partsOf(c) || hides(c, true)) return false;
         c.key = sc * 8 - std::min<int>(depth, 40);
         if (c.key <= kNearFloor) scattered.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -233,13 +326,13 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         int sc;
         if (!NameMatch(shape, name, n, dir, sc, b)) return false;
         const int p = NearMatch(name, n, close);
-        if (!p || !partsOf(c)) return false;
+        if (!p || !partsOf(c) || hides(c, false)) return false;
         c.percent = static_cast<int16_t>(p);
         c.key = NearScore(p, n);
         return true;
     };
     // a folder outside the index: walked, with the same scoring
-    auto walkScan = [&](auto match) {
+    auto walkScan = [&](auto match, bool count = true) {
         ScanOut s;
         std::vector<AddedItem> walked;
         WalkTree(scope, GetTickCount64() + 4000, [&](const std::wstring& p, const WIN32_FIND_DATAW& fd) {
@@ -248,12 +341,15 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             Cand c{0, UINT32_MAX, static_cast<uint32_t>(walked.size()), 0, 0};
             const uint8_t depth = static_cast<uint8_t>(std::min<size_t>(250, std::count(p.begin(), p.end(), L'\\')));
-            if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf) && inParts(k)) {
+            const bool left = follow && oneByOne.Check(p, dir);  // what .gitignore leaves out
+            if (left) {
+                if (count && match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf)) hidden.fetch_add(1, std::memory_order_relaxed);
+            } else if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf) && inParts(k)) {
                 ++s.total;
                 walked.push_back({p, dir, k});
                 s.best.push_back(c);
             }
-            return !dir || !JunkDirs().count(Lower(fd.cFileName));
+            return !dir || (!left && !JunkDirs().count(Lower(fd.cFileName)));
         });
         std::sort(s.best.begin(), s.best.end(), [](const Cand& x, const Cand& y) { return x.key > y.key; });
         if (s.best.size() > keep) s.best.resize(keep);
@@ -285,7 +381,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     // or else names with the letters scattered along them. Either way the answer says so.
     bool nearOnly = false;
     if (close.mistakes >= 0 && good == 0 && !summary) {
-        ScanOut nearScan = indexed ? ScanIndex(vols, added, keep, scope, nearMatch) : walkScan(nearMatch);
+        ScanOut nearScan = indexed ? ScanIndex(vols, added, keep, scope, nearMatch) : walkScan(nearMatch, false);
         std::vector<Found> more = toFound(nearScan);
         if (!more.empty()) {  // they are what there is to page through; the scattered ones say less than they do
             nearOnly = true;
@@ -296,6 +392,19 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     }
     const bool scatteredOnly = good == 0 && !nearOnly && !found.empty();
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
+    if (found.empty() && hidden && !rows) {  // only where .gitignore leaves things out: shown from there, saying so
+        Json all = a;
+        Json yes;
+        yes.kind = Json::Bool;
+        yes.b = true;
+        all.o.insert(all.o.begin(), {"ignored", yes});
+        ToolOut o = ToolFind(all);
+        o.text = L"Nothing outside what .gitignore leaves out (and dependency and cache folders); in there:\n" + o.text;
+        return o;
+    }
+    if (hidden)
+        building += L"(" + Thousands(hidden) + (hidden == 1 ? L" more is" : L" more are") +
+                    L" in what .gitignore leaves out, or in dependency and cache folders: ignored=true shows them.)\n";
     if (found.empty() && rows) return {L"#rows\t0\t1\treal\n", false, true};
     if (found.empty())
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
@@ -368,10 +477,11 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             f.why.push_back(L"close to what was typed: " + std::to_wstring(f.percent) + L"%");
             return;
         }
-        if (const int64_t t = LastActivity(f.key)) {
+        uint8_t kind = 0;
+        if (const int64_t t = LastActivity(f.key, &kind)) {
             const int64_t age = now - t;
             f.boost += age < kHour ? 3000 : age < kDay ? 1500 : age < 7 * kDay ? 600 : 0;
-            if (age < 7 * kDay) f.why.push_back(L"changed " + Ago(t));
+            if (age < 7 * kDay) f.why.push_back((kind == kOpened ? L"opened " : L"changed ") + Ago(t));
         }
         if (const double picked = JoltPicked(typed, f.key); picked > 0) {  // chosen in Jolt's Ctrl+P for this very text
             f.boost += static_cast<int>(std::min(5000.0, 3000.0 + 500.0 * picked));
@@ -489,7 +599,33 @@ std::wstring RegexSign(const std::wstring& p) {
     return L"";
 }
 
-ToolOut ToolGrep(const Json& a) {
+// Is a drive a spinning disk? Its first reads are slow (seeks), which an answer can say. Asked once per drive.
+bool HardDisk(wchar_t letter) {
+    static std::mutex m;
+    static int known[26] = {};  // 0 not asked, 1 a hard disk, 2 not one
+    const int i = static_cast<int>(towupper(letter)) - L'A';
+    if (i < 0 || i >= 26) return false;
+    std::lock_guard lk(m);
+    if (!known[i]) {
+        known[i] = 2;
+        wchar_t dev[] = L"\\\\.\\X:";
+        dev[4] = static_cast<wchar_t>(L'A' + i);
+        const HANDLE h = CreateFileW(dev, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            STORAGE_PROPERTY_QUERY sq{StorageDeviceSeekPenaltyProperty, PropertyStandardQuery, {0}};
+            DEVICE_SEEK_PENALTY_DESCRIPTOR d{};
+            DWORD got = 0;
+            if (DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &sq, sizeof(sq), &d, sizeof(d), &got, nullptr) && got >= sizeof(d) && d.IncursSeekPenalty) known[i] = 1;
+            CloseHandle(h);
+        }
+    }
+    return known[i] == 1;
+}
+
+// rows: for a program that lists the matches itself (the pipe's __grep_rows): a line "#rows", the files with matches,
+// the matching lines, 1 when not all of them are listed, and how it searched (asked, nocase, regex); then one line per
+// match: the path, the line, the column and the line's text (a long one around the match), tab-separated.
+ToolOut ToolGrep(const Json& a, bool rows = false) {
     const auto started = std::chrono::steady_clock::now();
     GrepQuery q;
     q.pattern = ArgStr(a, "pattern");
@@ -512,28 +648,29 @@ ToolOut ToolGrep(const Json& a) {
             else q.include.push_back(g);
         }
     const int around = ArgInt(a, "context", 1, 0, 5);  // both sides; before and after set one each, further
-    q.context.before = ArgInt(a, "before", around, 0, 200);
-    q.context.after = ArgInt(a, "after", around, 0, 200);
-    q.context.block = ArgBool(a, "block", false);
-    q.perFile = ArgInt(a, "per_file", 5, 1, 200);
+    q.context.before = rows ? 0 : ArgInt(a, "before", around, 0, 200);
+    q.context.after = rows ? 0 : ArgInt(a, "after", around, 0, 200);
+    q.context.block = !rows && ArgBool(a, "block", false);
+    q.perFile = rows ? ArgInt(a, "per_file", 100, 1, 10000) : ArgInt(a, "per_file", 5, 1, 200);
     q.documents = ArgBool(a, "documents", true);
     q.hidden = ArgBool(a, "hidden", false);
     q.ignored = ArgBool(a, "ignored", false);
     q.budgetMs = static_cast<uint64_t>(ArgInt(a, "time_budget_ms", 6000, 500, 60000));
-    const int limit = ArgInt(a, "limit", 30, 1, 300), offset = ArgInt(a, "offset", 0, 0, 1000000);
+    const int limit = rows ? ArgInt(a, "limit", 2000, 1, 100000) : ArgInt(a, "limit", 30, 1, 300), offset = ArgInt(a, "offset", 0, 0, 1000000);
     const bool summary = ArgBool(a, "summary", false);
     const bool isFile = !(GetFileAttributesW(LongPath(q.root).c_str()) & FILE_ATTRIBUTE_DIRECTORY);
     const std::wstring base = isFile ? ParentOf(q.root) : q.root;
 
     GrepResult r = RunGrep(q);
     if (!r.error.empty()) return {r.error, true};
-    std::wstring note;
+    std::wstring note, how = L"asked";
     if (r.files.empty() && !q.ignoreCase && !q.regex) {  // the exact case said no: what ignoring it finds
         GrepQuery q2 = q;
         q2.ignoreCase = true;
         GrepResult r2 = RunGrep(q2);
         if (!r2.files.empty()) {
             note = L"No match with that exact case; ignoring case:\n";
+            how = L"nocase";
             r = std::move(r2);
         }
     }
@@ -547,17 +684,42 @@ ToolOut ToolGrep(const Json& a) {
         else if (r2.files.empty()) regexMiss = L"Nothing as a regex either (" + sign + L" is a regex sign).\n";
         else {
             note = L"No match for the literal text; " + sign + L" is a regex sign, so as a regex (regex: true):\n";
+            how = L"regex";
             r = std::move(r2);
         }
     }
     uint64_t lines = 0;
     for (const FileHits& f : r.files) lines += f.matches;
+    if (rows) {
+        std::wstring out;
+        bool cut = r.timedOut;
+        int n = 0;
+        for (const FileHits& f : r.files) {
+            cut = cut || f.matches > static_cast<int>(f.lines.size());
+            for (const LineHit& h : f.lines) {
+                if (n >= limit) {
+                    cut = true;
+                    break;
+                }
+                std::wstring t = h.text;
+                std::replace(t.begin(), t.end(), L'\t', L' ');
+                out += f.path + L"\t" + std::to_wstring(h.line) + L"\t" + std::to_wstring(h.col) + L"\t" + t + L"\n";
+                ++n;
+            }
+        }
+        return {L"#rows\t" + std::to_wstring(r.files.size()) + L"\t" + std::to_wstring(lines) + (cut ? L"\t1\t" : L"\t0\t") + how + L"\n" + out, false,
+                r.files.empty(), r.timedOut};
+    }
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     std::wstring head = L"grep \"" + q.pattern + L"\"" + (q.without.empty() ? L"" : L" without \"" + q.without + L"\"") + L" in " + q.root + L": " + Thousands(lines) +
                         (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
                         (r.searched == 1 ? L" file" : L" files") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
-                        L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" + (r.fromMemory ? L", read from Seek's memory, not the drive" : L"") + L").\n";
+                        L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" +
+                        (r.fromMemory ? L", read from Seek's memory, not the drive"
+                         : ms > 1000 && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
+                                                            : L"") +
+                        L").\n";
     std::wstring tail;
     if (r.timedOut) tail += L"Stopped at the time budget (" + std::to_wstring(q.budgetMs / 1000) + L" s): not everything was searched. Narrow path or glob, or raise time_budget_ms.\n";
     if (!r.noFilter.empty()) {
@@ -669,7 +831,9 @@ ToolOut ToolGrep(const Json& a) {
 
 // ---- recent
 
-ToolOut ToolRecent(const Json& a) {
+// rows: for a program that lists them itself (the pipe's __recent_rows): a line "#rows", how many, 1 when that is all;
+// then one per line: D or F, the full path, the time in Unix seconds, and created, changed, renamed or opened.
+ToolOut ToolRecent(const Json& a, bool rows = false) {
     std::wstring scope = ArgStr(a, "path");
     if (!scope.empty()) {
         scope = Normalize(Expand(scope));
@@ -677,7 +841,8 @@ ToolOut ToolRecent(const Json& a) {
     }
     const std::wstring query = Trim(ArgStr(a, "query"));
     const NameQuery q = ParseNameQuery(query);
-    const int limit = ArgInt(a, "limit", 20, 1, 200);
+    const int limit = rows ? ArgInt(a, "limit", 1000, 1, 100000) : ArgInt(a, "limit", 20, 1, 200);
+    const bool walk = ArgBool(a, "walk", true);  // with path, the dates on disk too
     const int64_t span = ParseSpan(ArgStr(a, "since"), 7 * kDay), from = NowFt() - span;
     const bool system = ArgBool(a, "include_system", false);
     const std::wstring scopeKey = Key(scope);
@@ -688,13 +853,18 @@ ToolOut ToolRecent(const Json& a) {
         int64_t time;
         std::wstring what;
         bool folder = false;
+        const wchar_t* code = L"";  // for rows
     };
     std::unordered_map<std::wstring, Item> items;
     RepoIgnore ignore;  // build outputs and the like: what a repository's .gitignore leaves out is churn too
     // opened: the user opened it in Jolt, so it counts even where .gitignore leaves things out
-    auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder, bool opened = false) {
+    auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder, const wchar_t* code, bool opened = false) {
         const std::wstring k = Key(path);
         if (t < from || Private(k) || (!scope.empty() && !IsUnder(k, scopeKey)) || (!system && NoiseBelow(k, scopeKey))) return;
+        for (const std::wstring& p : q.pathParts)
+            if (k.find(p) == std::wstring::npos) return;
+        for (const std::wstring& p : q.notPaths)
+            if (HasPathPart(k, p)) return;
         if (!system && !opened && ignore.Check(path, false)) return;
         if (!query.empty()) {
             const std::wstring leaf = LeafOf(path);
@@ -703,7 +873,7 @@ ToolOut ToolRecent(const Json& a) {
             if (!NameMatch(q, leaf.c_str(), leaf.size(), folder, sc, b)) return;
         }
         auto it = items.find(k);
-        if (it == items.end() || it->second.time < t) items[k] = {path, t, what, folder};
+        if (it == items.end() || it->second.time < t) items[k] = {path, t, what, folder, code};
     };
     // copied out first: the filtering reads from disk (.gitignore files), and the drive watchers need the lock
     int64_t since;
@@ -714,15 +884,17 @@ ToolOut ToolRecent(const Json& a) {
         for (const auto& [k, x] : g_act)
             if (x.kind != kDeleted && x.time >= from) acts.push_back(x);
     }
-    for (const Act& x : acts) add(x.path, x.time, ActName(x.kind), false);
+    for (const Act& x : acts)
+        add(x.path, x.time, ActName(x.kind), false,
+            x.kind == kCreated ? L"created" : x.kind == kRenamed ? L"renamed" : x.kind == kOpened ? L"opened" : L"changed", x.kind == kOpened);
     std::vector<Use> uses;
     {
         std::lock_guard lk(g_useM);
         uses = g_use;
     }
-    for (const Use& u : uses) add(u.path, u.last, u.file ? L"opened in Jolt" : L"folder opened in Jolt", !u.file, true);
+    for (const Use& u : uses) add(u.path, u.last, u.file ? L"opened in Jolt" : L"folder opened in Jolt", !u.file, L"opened", true);
     bool walked = false, walkCut = false;
-    if (!scope.empty()) {  // the dates on disk too: also what changed before Seek was watching
+    if (!scope.empty() && walk) {  // the dates on disk too: also what changed before Seek was watching
         walked = true;
         const uint64_t deadline = GetTickCount64() + 3000;
         WalkTree(scope, deadline, [&](const std::wstring& p, const WIN32_FIND_DATAW& fd) {
@@ -730,7 +902,7 @@ ToolOut ToolRecent(const Json& a) {
             if (dir)
                 return !JunkDirs().count(Lower(fd.cFileName)) && !Private(Key(p)) && Key(p) != Key(DataDir()) &&  // not Seek's own files
                        (system || !ignore.Check(p, true));
-            add(p, Ft(fd.ftLastWriteTime), L"modified", false);
+            add(p, Ft(fd.ftLastWriteTime), L"modified", false, L"changed");
             return false;
         });
         walkCut = GetTickCount64() > deadline;
@@ -739,6 +911,21 @@ ToolOut ToolRecent(const Json& a) {
     v.reserve(items.size());
     for (auto& [k, it] : items) v.push_back(std::move(it));
     std::sort(v.begin(), v.end(), [](const Item& x, const Item& y) { return x.time > y.time; });
+    if (rows) {
+        std::wstring out;
+        size_t i = 0;
+        int n = 0;
+        for (; i < v.size() && n < limit; ++i) {
+            WIN32_FILE_ATTRIBUTE_DATA d{};
+            if (!FileInfo(v[i].path, d)) continue;  // gone
+            const bool dir = (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (dir && !v[i].folder) continue;
+            out += (dir ? L"D\t" : L"F\t") + v[i].path + L"\t" + std::to_wstring((v[i].time - 116444736000000000LL) / 10000000) + L"\t" + v[i].code + L"\n";
+            ++n;
+        }
+        const bool all = i == v.size();  // every one was looked at: the count is what is listed
+        return {L"#rows\t" + std::to_wstring(all ? static_cast<size_t>(n) : v.size()) + (all && !walkCut ? L"\t1\n" : L"\t0\n") + out, false, n == 0, walkCut};
+    }
     std::wstring list;
     int shown = 0;
     for (const Item& it : v) {

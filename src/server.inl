@@ -11,7 +11,7 @@ const char* kInstructions =
 
 const char* kToolsJson = R"JSON([
 {"name":"find","title":"Find files by name",
- "description":"Find files and folders by name anywhere on this PC (every fixed drive) in milliseconds, from a live index. Fuzzy and typo-tolerant. Exact names come first, then what the user changed lately, what is in folders they use, and what is inside `near`. Use it instead of dir /s, Get-ChildItem -Recurse or find. Query: words must appear in the name in order (fuzzy); \"in quotes\" must appear as typed, as whole words; .png or ext:png,jpg filter the extension; * and ? are wildcards on the name, {a,b} either; {alpha,beta gamma} alone is a name with one of those in it, as typed; !word leaves out names with it; type:file or type:folder; a fragment with a slash, like src/report.pdf or docs/, must be in the path (what follows its last slash is the name to look for).",
+ "description":"Find files and folders by name anywhere on this PC (every fixed drive) in milliseconds, from a live index. Fuzzy and typo-tolerant. Exact names come first, then what the user changed lately, what is in folders they use, and what is inside `near`. Use it instead of dir /s, Get-ChildItem -Recurse or find. Query: words must appear in the name in order (fuzzy); \"in quotes\" must appear as typed, as whole words; .png or ext:png,jpg filter the extension; * and ? are wildcards on the name, {a,b} either; {alpha,beta gamma} alone is a name with one of those in it, as typed; !word leaves out names with it, !folder/ what is in that folder; type:file or type:folder; a fragment with a slash, like src/report.pdf or docs/, must be in the path (what follows its last slash is the name to look for).",
  "inputSchema":{"type":"object","properties":{
   "query":{"type":"string","description":"What to look for, like \"report 2026\", \"jolt.exe\", \".blend\" or \"*.log !debug\"."},
   "path":{"type":"string","description":"Only below this folder. Omit to search every drive."},
@@ -19,7 +19,8 @@ const char* kToolsJson = R"JSON([
   "type":{"type":"string","enum":["any","file","folder"]},
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
   "offset":{"type":"integer","minimum":0,"default":0,"description":"Skip this many results (to page): the answer gives the offset of the next ones."},
-  "summary":{"type":"boolean","default":false,"description":"How many and where (counts by folder, extension and drive) instead of a list."}},
+  "summary":{"type":"boolean","default":false,"description":"How many and where (counts by folder, extension and drive) instead of a list."},
+  "ignored":{"type":"boolean","default":false,"description":"With path: also what .gitignore leaves out there, and dependency and cache folders (node_modules, .venv...). Left out by default, as grep leaves them out; the answer says how many there are."}},
   "required":["query"]},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
 {"name":"grep","title":"Search text inside files",
@@ -51,6 +52,7 @@ const char* kToolsJson = R"JSON([
   "path":{"type":"string","description":"Only below this folder; also reads the dates on disk there."},
   "query":{"type":"string","description":"Only names like this (same syntax as find), like \".docx\" or \"invoice\"."},
   "since":{"type":"string","default":"7d","description":"How far back: 30m, 2h, 3d, 2w."},
+  "walk":{"type":"boolean","default":true,"description":"With path: also read the dates on disk there. false: only what Seek saw change, which is instant."},
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
   "include_system":{"type":"boolean","default":false}}},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}
@@ -153,18 +155,27 @@ void Serve(HANDLE pipe) {
         } else if (tool && tool->s == "__stats") {  // seek --stats
             const Json* days = j.at("days");
             reply = "{\"text\":" + JsonQuote(Utf8(StatsText(days && days->kind == Json::Num ? std::max(1, static_cast<int>(days->n)) : 14))) + "}";
-        } else if (tool && tool->s == "__rows") {  // Seek's window, of any version: a find, as rows for its list
+        } else if (tool && (tool->s == "__rows" || tool->s == "__grep_rows" || tool->s == "__recent_rows")) {
+            // Programs that list the answers themselves (Seek's window, Slate), of any version: find, grep and recent
+            // as rows. Not written to the log, not counted as an agent's calls.
             const Json* args = j.at("args");
             const Json* max = j.at("max");
             ToolOut out;
             try {
-                if (args) out = ToolFind(*args, max && max->kind == Json::Num ? static_cast<size_t>(std::clamp(max->n, 1.0, 100000.0)) : 5000);
-                else out = {L"__rows needs args", true};
+                if (!args) out = {Wide(tool->s) + L" needs args", true};
+                else if (tool->s == "__grep_rows") out = ToolGrep(*args, true);
+                else if (tool->s == "__recent_rows") out = ToolRecent(*args, true);
+                else out = ToolFind(*args, max && max->kind == Json::Num ? static_cast<size_t>(std::clamp(max->n, 1.0, 100000.0)) : 5000);
             } catch (const std::exception& e) {
                 out = {L"Seek failed: " + Wide(e.what()), true};
             }
             g_lastCall = GetTickCount64();
             reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + ",\"version\":\"" SEEK_VERSION "\"}";
+        } else if (tool && tool->s == "__opened") {  // a program opened this file: it ranks as used, and recent lists it
+            const Json* args = j.at("args");
+            const Json* p = args ? args->at("path") : nullptr;
+            const bool ok = p && p->kind == Json::Str && ActOpened(Normalize(Wide(p->s)));
+            reply = ok ? R"({"text":"ok"})" : R"({"text":"__opened needs the path of a file that exists","error":true})";
         } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
             reply = "{\"tools\":" + ToolsLine() + "}";
         } else {

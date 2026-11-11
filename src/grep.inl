@@ -463,6 +463,7 @@ bool DocText(const std::wstring& path, std::wstring& out, uint64_t deadline) {
 
 struct LineHit {
     int line = 0;
+    int col = 0;  // where its first match starts in the line, from 1
     std::wstring text;  // the line; a long one around its first match
     std::vector<std::pair<size_t, std::wstring>> more;  // a long line: around the matches past that, by column
     int beyond = 0;  // and the matches past those
@@ -603,6 +604,7 @@ void AddHit(FileHits& fh, const std::wstring& text, const std::vector<std::pair<
     size_t e = text.find(L'\n', pos);
     if (e == std::wstring::npos) e = text.size();
     h.text = LineAround(text, s, e, pos);
+    h.col = static_cast<int>(pos - s) + 1;
     size_t ts = s, te = e;
     TrimLine(text, ts, te);
     if (te - ts > kWide) {  // a long line: a window for each match the ones before don't show

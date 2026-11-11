@@ -370,6 +370,7 @@ struct NameQuery {
     std::vector<std::vector<std::wstring>> globs;  // one of each group must match: "*.{ts,tsx}" is a group of two
     std::vector<std::wstring> phrases;  // "in quotes": in the name as typed, whole words (they are among the words too)
     std::vector<std::vector<std::wstring>> anyPhrases;  // "{alpha,beta gamma}": one of each group in the name, as phrases are
+    std::vector<std::wstring> notPaths;  // "!target/": what is in that folder is left out ("\target\", lowercase)
     int kind = 0;  // 1 folders, 2 files
     std::wstring text;
     bool Empty() const { return words.empty() && exts.empty() && globs.empty() && anyPhrases.empty() && pathParts.empty(); }
@@ -424,7 +425,14 @@ NameQuery ParseNameQuery(const std::wstring& q) {
             continue;
         }
         if (l.size() > 1 && l[0] == L'!') {
-            out.notWords.push_back(l.substr(1));
+            std::wstring w = l.substr(1);
+            if (w.find_first_of(L"\\/") != std::wstring::npos) {  // "!target/", "!src/gen/": a folder on the way
+                std::replace(w.begin(), w.end(), L'/', L'\\');
+                if (w[0] != L'\\' && !(w.size() > 1 && w[1] == L':')) w = L"\\" + w;
+                if (w != L"\\") out.notPaths.push_back(w);
+            } else {
+                out.notWords.push_back(w);
+            }
             continue;
         }
         if (l.find_first_of(L"\\/") != std::wstring::npos) {
@@ -455,6 +463,13 @@ NameQuery ParseNameQuery(const std::wstring& q) {
         }
     }
     return out;
+}
+
+// Is a part of a path ("\target\", lowercase) in a key? A folder's own key has it too, without the last '\'.
+bool HasPathPart(const std::wstring& key, const std::wstring& part) {
+    if (key.find(part) != std::wstring::npos) return true;
+    const size_t n = part.size() - (part.back() == L'\\' ? 1 : 0);
+    return n < part.size() && key.size() >= n && key.compare(key.size() - n, n, part, 0, n) == 0;
 }
 
 // Is the phrase in the name (both lowercase) as whole words: not inside a longer word, so "male 2" isn't in "female 2"?
