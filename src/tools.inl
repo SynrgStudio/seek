@@ -279,8 +279,27 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             if (HasPathPart(key, p)) return false;
         return true;
     };
+    // "!target/", "!node_modules/": one folder's name each. Then the names on the way up are compared, without making
+    // the path of every name that matches: on every drive that is many, and making them took most of a second.
+    std::vector<std::wstring> notNames;
+    bool byNames = q.pathParts.empty() && !q.notPaths.empty();
+    for (const std::wstring& p : q.notPaths) {
+        if (p.size() > 2 && p.front() == L'\\' && p.back() == L'\\' && p.find(L'\\', 1) == p.size() - 1) notNames.push_back(p.substr(1, p.size() - 2));
+        else byNames = false;
+    }
     auto partsOf = [&](const Cand& c) {  // of a name in the index or made since; a walk looks at its own
         if ((q.pathParts.empty() && q.notPaths.empty()) || !indexed) return true;
+        if (c.vol != UINT32_MAX && byNames) {
+            const Volume& v = *vols[c.vol];
+            int steps = 0;
+            for (uint32_t n = c.node; n < v.count && steps++ < 260; n = v.node[n].parent) {
+                const IdxNode& nd = v.node[n];
+                for (const std::wstring& w : notNames)
+                    if (nd.nameLen == w.size() && _wcsnicmp(v.name + nd.nameOff, w.c_str(), w.size()) == 0) return false;
+                if (v.node[n].parent == n) break;
+            }
+            return true;
+        }
         if (c.vol != UINT32_MAX) return inParts(Key(NodePath(*vols[c.vol], c.node)));
         return inParts(added[c.node].key.empty() ? Key(added[c.node].path) : added[c.node].key);
     };
@@ -856,22 +875,36 @@ ToolOut ToolRecent(const Json& a, bool rows = false) {
         const wchar_t* code = L"";  // for rows
     };
     std::unordered_map<std::wstring, Item> items;
-    RepoIgnore ignore;  // build outputs and the like: what a repository's .gitignore leaves out is churn too
+    // Build outputs and the like: what a repository's .gitignore leaves out is churn too. Finding that out reads the
+    // disk (a .git, the ignore files), so the answers are kept for a minute, for every call: a program asks again
+    // and again (Slate, each time a note opens), and an edited .gitignore is seen a minute later at most.
+    static std::mutex ignoreM;
+    static std::unique_ptr<RepoIgnore> kept;
+    static uint64_t keptAt = 0;
+    std::lock_guard ignoreLock(ignoreM);
+    if (!kept || GetTickCount64() - keptAt > 60000) {
+        kept = std::make_unique<RepoIgnore>();
+        keptAt = GetTickCount64();
+    }
+    RepoIgnore& ignore = *kept;
     // opened: the user opened it in Jolt, so it counts even where .gitignore leaves things out
     auto add = [&](const std::wstring& path, int64_t t, const std::wstring& what, bool folder, const wchar_t* code, bool opened = false) {
+        // the cheap questions first: most paths go at one of them, and only what is left reads the disk
+        if (t < from) return;
         const std::wstring k = Key(path);
-        if (t < from || Private(k) || (!scope.empty() && !IsUnder(k, scopeKey)) || (!system && NoiseBelow(k, scopeKey))) return;
+        if (!scope.empty() && !IsUnder(k, scopeKey)) return;
         for (const std::wstring& p : q.pathParts)
             if (k.find(p) == std::wstring::npos) return;
         for (const std::wstring& p : q.notPaths)
             if (HasPathPart(k, p)) return;
-        if (!system && !opened && ignore.Check(path, false)) return;
         if (!query.empty()) {
             const std::wstring leaf = LeafOf(path);
             int sc;
             std::wstring b;
             if (!NameMatch(q, leaf.c_str(), leaf.size(), folder, sc, b)) return;
         }
+        if (Private(k) || (!system && NoiseBelow(k, scopeKey))) return;
+        if (!system && !opened && ignore.Check(path, false)) return;
         auto it = items.find(k);
         if (it == items.end() || it->second.time < t) items[k] = {path, t, what, folder, code};
     };
@@ -882,7 +915,7 @@ ToolOut ToolRecent(const Json& a, bool rows = false) {
         std::lock_guard lk(g_actM);
         since = g_actSince;
         for (const auto& [k, x] : g_act)
-            if (x.kind != kDeleted && x.time >= from) acts.push_back(x);
+            if (x.kind != kDeleted && x.time >= from && (scope.empty() || IsUnder(k, scopeKey))) acts.push_back(x);
     }
     for (const Act& x : acts)
         add(x.path, x.time, ActName(x.kind), false,
