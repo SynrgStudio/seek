@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.8
+
+- **`recent` answers sooner, above all with `walk: false` or a `path`.** It asked whether each path it had seen change was left out by a `.gitignore`, which reads the disk, before asking whether its name was wanted at all; now the cheap questions come first, and the answers about `.gitignore` are kept for a minute between calls. Here, with a `path` and `walk: false`, from about 55 ms to under 10; with a query on every drive, about three times sooner.
+- **`!folder/` on every drive costs little**: the names of the folders on the way up are compared, without making the path of every name that matches.
+
 ## 0.4.7
 
 - **`find` below a folder leaves out what `.gitignore` leaves out there, and dependency and cache folders**, as `grep` already did: a search for notes in a Rust repository listed the files in `target` too, and in one repository here 449 of 509 `.md` files were in ignored folders. The answer says how many were left out, and `ignored: true` lists them. When a name is only in there, it is shown from there, saying so. Searches on every drive are as before.
