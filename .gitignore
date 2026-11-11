@@ -1,6 +1,5 @@
 CLAUDE.local.md
 build/
-_site/
 __pycache__/
 *.pyc
 clients/rust/target/
