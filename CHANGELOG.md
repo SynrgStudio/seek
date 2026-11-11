@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.10
+
+- **`__status_rows`**, for programs, through the pipe: Seek's version, and for each drive whether its index is loading, being made for the first time (with the names found so far), ready or missing, whose it is (Jolt's or Seek's own) and when it was taken. A program can say "Seek is indexing D: (812,345 names)" while the first index is made, instead of making up a percentage. README has the format.
+
 ## 0.4.9
 
 - **`recent` right after Seek starts waits for what the last run saw.** The first call after the background process started (after an update or a reboot) could come before the saved activity was read: it answered with almost nothing, and "changes seen live since 0000-00-00". It now waits for that, as `find` does: about a second, once.
