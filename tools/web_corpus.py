@@ -9,7 +9,7 @@ corpus (see web/README in synrgs-web's CORPUS.md), and asks for each number by i
 The prose is in web/notes/, the rules in web/rules.md, the corpus' own history in web/CHANGELOG.md: those are written
 by hand. A number in a note is written with its fact's key after it, like 52 ms [find_ms].
 """
-import datetime, json, os, re, subprocess, sys
+import functools, json, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -40,8 +40,9 @@ BENCH = f"bench/results.json (bench/bench.py), Seek {BENCH_SEEK}, run committed 
 SHELL = "bench/results.json, a separate run of the shell tools (a ten-minute walk isn't repeated)"
 
 
+@functools.cache
 def released():
-    """The date of this version's release on GitHub; the version's commit date when gh can't say."""
+    """The date of this version's release on GitHub; the version's commit date when gh can't say. Asked once."""
     try:
         out = subprocess.run(["gh", "release", "view", "v" + VERSION, "--repo", "SynrgStudio/seek", "--json", "publishedAt", "-q", ".publishedAt"],
                              cwd=ROOT, capture_output=True, text=True, timeout=30)
@@ -318,8 +319,9 @@ def main():
     }
     stale = []
     for path, text in want.items():
-        have = open(path, encoding="utf-8").read() if os.path.exists(path) else None
-        if have != text:
+        # read without newline translation, then compared without line endings: git may check files out with CRLF
+        have = open(path, encoding="utf-8", newline="").read() if os.path.exists(path) else None
+        if have is None or have.replace("\r\n", "\n") != text.replace("\r\n", "\n"):
             stale.append(os.path.relpath(path, ROOT))
             if not check:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
