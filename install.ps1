@@ -36,7 +36,7 @@ try {
     $base = if ($Version) { "https://github.com/$repo/releases/download/v$($Version.TrimStart('v'))" } else { "https://github.com/$repo/releases/latest/download" }
 
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $download = "$exe.download"
+    $download = Join-Path $dir 'seek.download.exe'  # an .exe: it is run once before it takes seek.exe's place
     Write-Host "Downloading seek.exe from $base"
     Invoke-WebRequest -Uri "$base/seek.exe" -OutFile $download -UseBasicParsing
     $raw = (Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -UseBasicParsing).Content
@@ -48,11 +48,12 @@ try {
         throw "seek.exe doesn't match the release's SHA-256 ($got against $want). Nothing was installed."
     }
 
-    # The background process lets go of the old file, but each open agent session runs a seek.exe of its own, and
-    # Windows doesn't let a running program be replaced. It can be renamed, though: the old one is moved aside and
-    # deleted once nothing runs it, now or on the next install. Those sessions start the background process again
-    # from seek.exe, so they get the new one from their next call.
-    if (Test-Path $exe) { & $exe --stop | Out-Null }
+    # The background process is stopped first, whatever seek.exe it runs from: this one, or a copy a program carries
+    # inside it (Slate does). The new seek.exe asks, so even an older Seek that doesn't know this installer stops.
+    # Each open agent session runs a seek.exe of its own, and Windows doesn't let a running program be replaced. It can
+    # be renamed, though: the old one is moved aside and deleted once nothing runs it, now or on the next install.
+    # Those sessions start the background process again from seek.exe, so they get the new one from their next call.
+    & $download --stop | Out-Null
     Get-ChildItem -Path $dir -Filter 'seek.exe.old-*' | Remove-Item -Force -ErrorAction SilentlyContinue
     $old = $null
     if (Test-Path $exe) {

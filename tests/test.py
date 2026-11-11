@@ -613,6 +613,78 @@ t = r.get("text", "").split("\n")
 check("status rows: the version, then a drive per line with its state, names, source and time",
       t[0].startswith("#rows\t" + r.get("version", "?") + "\t") and int(t[0].split("\t")[2]) == len([l for l in t[1:] if l]) >= 1 and
       all(re.fullmatch(r"[A-Z]\t(loading|indexing|ready|none)\t[0-9]+\t(jolt|own)\t[0-9]+", l) for l in t[1:] if l), r.get("text", "")[:400])
+# the protocol for programs, version 1 (PROTOCOL.md)
+r = pipe_call("0.0.0 test", "hello")
+check("protocol: hello says the protocol, the version, the exe and the data folder, without the index",
+      r.get("api") == 1 and r.get("apis") == [1] and r.get("version", "").count(".") == 2 and r.get("exe", "").lower().endswith("seek.exe") and
+      r.get("data", "").lower() == os.environ["SEEK_HOME"].lower() and isinstance(r.get("ready"), bool) and r.get("pid", 0) > 0, json.dumps(r)[:400])
+a = pipe_call("0.0.0 test", "find.rows", {"query": "engine", "path": S})
+b = pipe_call("0.0.0 test", "__rows", {"query": "engine", "path": S})
+check("protocol: find.rows is __rows by its stable name, with the protocol's version", a.get("text") == b.get("text") and a.get("api") == 1 and a.get("error") is False,
+      json.dumps(a)[:300])
+r = pipe_call("0.0.0 test", "grep.rows", {"path": S})
+check("protocol: an error has a code: bad_args", r.get("error") is True and r.get("code") == "bad_args", json.dumps(r)[:300])
+r = pipe_call("0.0.0 test", "find.rows", {"query": "engine", "path": S + "\\nothere"})
+check("protocol: an error has a code: not_found", r.get("error") is True and r.get("code") == "not_found", json.dumps(r)[:300])
+r = pipe_call("0.0.0 test", "opened", {"path": S + "\\nothere.txt"})
+check("protocol: opened a file that isn't there: not_found", r.get("error") is True and r.get("code") == "not_found", json.dumps(r)[:300])
+r = pipe_call("0.0.0 test", "nothing.rows", {"query": "x"})
+check("protocol: an unknown command: unknown_command", r.get("error") is True and r.get("code") == "unknown_command", json.dumps(r)[:300])
+r = pipe_call("0.0.0 test", "find.rows", {"query": "engine", "path": S}, api=2)
+check("protocol: a newer protocol than the daemon's: api_too_new, and the version it speaks", r.get("code") == "api_too_new" and r.get("api") == 1, json.dumps(r)[:300])
+# Every reply of the protocol for programs keeps its shape (tests/protocol/v1.json): a client of version 1 must work
+# with every later Seek. A shape that has to change is a new version of the protocol, not an edit of that file.
+def protocol_raw(payload):
+    key = os.environ["SEEK_HOME"].replace("/", "\\").rstrip("\\").lower()
+    h = 2166136261
+    for ch in key:
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    with open(r"\\.\pipe\seek-%s-%08x" % (os.environ["USERNAME"], h), "r+b", buffering=0) as p:
+        p.write(len(payload).to_bytes(4, "little") + payload)
+        data = b""
+        while len(data) < 4 or len(data) < 4 + int.from_bytes(data[:4], "little"):
+            data += p.read(65536)
+        return json.loads(data[4:])
+
+
+def protocol_fill(v):
+    if isinstance(v, str):
+        return v.replace("{S}", S)
+    if isinstance(v, dict):
+        return {k: protocol_fill(x) for k, x in v.items()}
+    return v
+
+
+KINDS = {"int": int, "str": str, "bool": bool, "list": list}
+spec = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "protocol", "v1.json"), encoding="utf-8"))
+for case in spec["cases"]:
+    if "raw" in case:
+        r = protocol_raw(case["raw"].encode())
+    else:
+        more = {"api": case["api"]} if "api" in case else {}
+        r = pipe_call("0.0.0 protocol test", case["tool"], protocol_fill(case["args"]), **more)
+    problems = []
+    for k, kind in (case.get("fields") or spec["every_reply"]).items():
+        if not isinstance(r.get(k), KINDS[kind]) or (kind == "int" and isinstance(r.get(k), bool)):
+            problems.append("%s isn't %s" % (k, kind))
+    if "code" in case:
+        if r.get("error") is not True or r.get("code") != case["code"]:
+            problems.append("not error %s" % case["code"])
+    elif "fields" not in case and r.get("error") is not False:
+        problems.append("an error")
+    if "text" in case and r.get("text") != case["text"]:
+        problems.append("text isn't %r" % case["text"])
+    if "header" in case:
+        lines = r.get("text", "").split("\n")
+        rows = [l for l in lines[1:] if l]
+        if not re.fullmatch(case["header"], lines[0]):
+            problems.append("header %r" % lines[0])
+        bad = [l for l in rows if not re.fullmatch(case.get("row", "(?!)"), l)]
+        if bad:
+            problems.append("row %r" % bad[0])
+        if len(rows) < case.get("min_rows", 0) or len(rows) > case.get("max_rows", 10 ** 9):
+            problems.append("%d rows" % len(rows))
+    check("protocol v1: " + case["name"], not problems, "; ".join(problems) + "  " + json.dumps(r)[:300])
 out = stats()
 check("rows: a program's own searches aren't counted as an agent's", re.search(today + r"\s+find\s+1\s", out) is not None, out)
 r = pipe_call("0.0.1 Jan  1 2026 00:00:00", "__tools")

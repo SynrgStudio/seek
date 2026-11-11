@@ -145,23 +145,22 @@ seek --stop                                         stop the background process
 
 ## For programs
 
-Any program of the same user can ask Seek's background process directly, without MCP, through its named pipe `\\.\pipe\seek-<USERNAME>`: each message is a 4-byte little-endian length and that many bytes of JSON, both ways, and a connection can stay open for one request after another. If the pipe isn't there, start `seek.exe --daemon` and try again for a few seconds. Give a `build` that starts with `0.0.0`, so that it is never taken for a newer Seek (which makes the background process step aside for it).
-
-These answer in rows, for a program that lists them itself; they aren't written to the log or counted in `seek --stats`:
-
-| tool | args | the answer's `text` |
-|---|---|---|
-| `__rows` | as `find` (`query`, `path`, `near`, `type`, `ignored`), and `"max": 5000` next to `args` | `#rows`, how many, `1` when that count is exact, `real`, `near` (close names: a typo) or `scattered`; then `D` or `F`, a tab and the path, best first |
-| `__grep_rows` | as `grep` (`pattern`, `path`, `regex`, `case`, `glob`, `ignored`...), `limit` (2,000) and `per_file` (100) | `#rows`, files with matches, matching lines, `1` when not all are listed, and `asked`, `nocase` or `regex` (how it searched); then the path, the line, the column and the line's text, tab-separated |
-| `__recent_rows` | as `recent` (`path`, `query`, `since`, `limit` (1,000)), and `walk: false` for only what Seek saw change, without reading the dates on disk | `#rows`, how many, `1` when that is all; then `D` or `F`, the path, the time in Unix seconds, and `created`, `changed`, `renamed` or `opened` |
-| `__opened` | `path` | `ok`: the file ranks as used in `find`, and `recent` lists it as opened |
-| `__status_rows` | none | `#rows`, Seek's version and how many drives; then one line per drive: the letter, `loading` (Seek has just started), `indexing` (its first index is being made), `ready` or `none`, how many names (so far, while indexing), `jolt` or `own` (whose index), and when it was taken in Unix seconds (0 when there is none yet). Without Jolt, how many names a drive has is known only at the end, so there is no percentage |
+Any program of the same user can ask Seek's background process directly, without MCP: a search box, an editor, a script. It sends JSON through Seek's named pipe and gets rows back, from the same index and history the agents use. Per request that costs about 0.1 ms; the search itself takes the 20–50 ms measured above.
 
 ```json
-{"build": "0.0.0 myapp", "tool": "__rows", "max": 5000, "args": {"query": "report .pdf"}}
+{"api": 1, "build": "0.0.0 myapp", "tool": "find.rows", "args": {"query": "report .pdf", "max": 5000}}
 ```
 
-Sizes and dates aren't in the rows: read them for the ones on screen. [Seek's window](https://seek.synrgs.tech) is built this way.
+| command | what it gives |
+|---|---|
+| `find.rows` | files and folders by name, best first |
+| `grep.rows` | the matching lines below a folder: path, line, column, text |
+| `recent.rows` | what was created, changed, renamed or opened lately, with the time |
+| `status.rows` | each drive's index: loading, being made (with the names so far), ready |
+| `opened` | tells Seek a program opened a file, so it ranks as used |
+| `hello`, `stop` | what is running; make room for a newer Seek |
+
+[PROTOCOL.md](PROTOCOL.md) has the whole protocol: the messages, every command's arguments and rows, the error codes, how a program starts Seek (or a copy of its own), and what version 1 promises to keep. Seek's own search window and [Slate](https://github.com/SynrgStudio/slate) are built on it. Client packages for Rust, Python and npm are on the [roadmap](https://github.com/SynrgStudio/seek/issues/27).
 
 ## Building and testing
 

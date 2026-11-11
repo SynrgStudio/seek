@@ -1,0 +1,39 @@
+{
+  "about": "The shape of every reply of the protocol for programs, version 1 (PROTOCOL.md). tests/test.py sends each request to the daemon built from the tree and checks the reply against it. {S} is the test folder. Changing a shape here is changing the protocol: that is a new version, not an edit.",
+  "every_reply": {"api": "int", "version": "str", "error": "bool"},
+  "cases": [
+    {"name": "hello", "tool": "hello", "args": {},
+     "fields": {"api": "int", "apis": "list", "version": "str", "build": "str", "exe": "str", "data": "str", "pid": "int", "ready": "bool"}},
+
+    {"name": "find.rows", "tool": "find.rows", "args": {"query": "engine", "path": "{S}"},
+     "header": "#rows\\t\\d+\\t[01]\\t(real|near|scattered)", "row": "[DF]\\t[A-Za-z]:\\\\[^\\t]+", "min_rows": 1},
+    {"name": "find.rows, max in args", "tool": "find.rows", "args": {"query": "engine", "path": "{S}", "max": 1},
+     "header": "#rows\\t\\d+\\t[01]\\t(real|near|scattered)", "row": "[DF]\\t[A-Za-z]:\\\\[^\\t]+", "min_rows": 1, "max_rows": 1},
+    {"name": "find.rows, nothing", "tool": "find.rows", "args": {"query": "zzqqxxnothingatall", "path": "{S}"},
+     "header": "#rows\\t0\\t1\\t(real|near|scattered)", "max_rows": 0},
+    {"name": "grep.rows", "tool": "grep.rows", "args": {"pattern": "Engine", "path": "{S}\\repo"},
+     "header": "#rows\\t\\d+\\t\\d+\\t[01]\\t(asked|nocase|regex)", "row": "[A-Za-z]:\\\\[^\\t]+\\t\\d+\\t\\d+\\t[^\\t]*", "min_rows": 1},
+    {"name": "recent.rows", "tool": "recent.rows", "args": {"path": "{S}", "since": "1d"},
+     "header": "#rows\\t\\d+\\t[01]", "row": "[DF]\\t[A-Za-z]:\\\\[^\\t]+\\t\\d{10}\\t(created|changed|renamed|opened)", "min_rows": 1},
+    {"name": "status.rows", "tool": "status.rows", "args": {},
+     "header": "#rows\\t\\d+\\.\\d+\\.\\d+\\t\\d+", "row": "[A-Z]\\t(loading|indexing|ready|none)\\t\\d+\\t(jolt|own)\\t\\d+", "min_rows": 1},
+    {"name": "opened", "tool": "opened", "args": {"path": "{S}\\repo\\src\\engine.h"}, "text": "ok"},
+
+    {"name": "error: bad_request", "raw": "not json", "code": "bad_request"},
+    {"name": "error: bad_args", "tool": "grep.rows", "args": {"path": "{S}"}, "code": "bad_args"},
+    {"name": "error: not_found", "tool": "find.rows", "args": {"query": "engine", "path": "{S}\\nothere"}, "code": "not_found"},
+    {"name": "error: not_a_folder", "tool": "find.rows", "args": {"query": "engine", "path": "{S}\\repo\\src\\engine.h"}, "code": "not_a_folder"},
+    {"name": "error: unknown_command", "tool": "nothing.rows", "args": {}, "code": "unknown_command"},
+    {"name": "error: api_too_new", "tool": "find.rows", "args": {"query": "engine", "path": "{S}"}, "api": 2, "code": "api_too_new"},
+
+    {"name": "old name __rows", "tool": "__rows", "args": {"query": "engine", "path": "{S}"},
+     "header": "#rows\\t\\d+\\t[01]\\t(real|near|scattered)", "row": "[DF]\\t[A-Za-z]:\\\\[^\\t]+", "min_rows": 1},
+    {"name": "old name __grep_rows", "tool": "__grep_rows", "args": {"pattern": "Engine", "path": "{S}\\repo"},
+     "header": "#rows\\t\\d+\\t\\d+\\t[01]\\t(asked|nocase|regex)", "row": "[A-Za-z]:\\\\[^\\t]+\\t\\d+\\t\\d+\\t[^\\t]*", "min_rows": 1},
+    {"name": "old name __recent_rows", "tool": "__recent_rows", "args": {"path": "{S}", "since": "1d"},
+     "header": "#rows\\t\\d+\\t[01]", "row": "[DF]\\t[A-Za-z]:\\\\[^\\t]+\\t\\d{10}\\t(created|changed|renamed|opened)", "min_rows": 1},
+    {"name": "old name __status_rows", "tool": "__status_rows", "args": {},
+     "header": "#rows\\t\\d+\\.\\d+\\.\\d+\\t\\d+", "row": "[A-Z]\\t(loading|indexing|ready|none)\\t\\d+\\t(jolt|own)\\t\\d+", "min_rows": 1},
+    {"name": "old name __opened", "tool": "__opened", "args": {"path": "{S}\\repo\\src\\engine.h"}, "text": "ok"}
+  ]
+}

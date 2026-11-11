@@ -140,44 +140,95 @@ void SaveState() {
     StatsSave();
 }
 
+// ---- the protocol for programs (PROTOCOL.md)
+
+constexpr int kApi = 1;  // the newest version of the protocol for programs this Seek speaks
+
+// A reply: the protocol and Seek's version, the text, and when it is an error, its kind.
+std::string Reply(const ToolOut& out) {
+    std::string r = "{\"api\":" + std::to_string(kApi) + ",\"version\":\"" SEEK_VERSION "\",\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false");
+    if (out.error) r += ",\"code\":" + JsonQuote(Utf8(out.code.empty() ? std::wstring(L"failed") : out.code));
+    return r + "}";
+}
+
+// A command for programs, by its name or the one it had first (the window and Slate used those); "" for another.
+std::string ProgramCommand(const std::string& t) {
+    static const std::pair<const char*, const char*> names[] = {
+        {"find.rows", "find.rows"},     {"__rows", "find.rows"},         {"grep.rows", "grep.rows"}, {"__grep_rows", "grep.rows"},
+        {"recent.rows", "recent.rows"}, {"__recent_rows", "recent.rows"}, {"status.rows", "status.rows"},
+        {"__status_rows", "status.rows"}, {"opened", "opened"},          {"__opened", "opened"},     {"hello", "hello"},
+        {"stop", "stop"}};
+    for (const auto& [name, cmd] : names)
+        if (t == name) return cmd;
+    return "";
+}
+
+// Serves a command for programs, from a program of any version: not written to the log, not counted as an agent's
+// call. stop doesn't return.
+std::string ServeProgram(const std::string& cmd, const Json& j, HANDLE pipe) {
+    static const Json none = [] {
+        Json e;
+        e.kind = Json::Obj;
+        return e;
+    }();
+    const Json* given = j.at("args");
+    const Json& args = given && given->kind == Json::Obj ? *given : none;
+    if (cmd == "hello") {  // what a program is talking to, without touching the index
+        return "{\"api\":" + std::to_string(kApi) + ",\"apis\":[1],\"version\":\"" SEEK_VERSION "\",\"build\":" + JsonQuote(kBuild) +
+               ",\"exe\":" + JsonQuote(Utf8(ExePath())) + ",\"data\":" + JsonQuote(Utf8(DataDir())) + ",\"pid\":" + std::to_string(GetCurrentProcessId()) +
+               ",\"ready\":" + (g_indexReady ? "true" : "false") + ",\"error\":false}";
+    }
+    if (cmd == "stop") {
+        WriteFrame(pipe, Reply({L"stopping"}));
+        FlushFileBuffers(pipe);
+        SaveState();
+        ExitProcess(0);
+    }
+    if (cmd == "status.rows") return Reply({StatusRows()});
+    if (cmd == "opened") {  // a program opened this file: it ranks as used, and recent lists it
+        const Json* p = args.at("path");
+        if (!p || p->kind != Json::Str || p->s.empty()) return Reply({L"opened needs path: the file a program opened.", true, false, false, L"bad_args"});
+        if (!ActOpened(Normalize(Wide(p->s)))) return Reply({L"Not found: " + Wide(p->s), true, false, false, L"not_found"});
+        return Reply({L"ok"});
+    }
+    // find, grep and recent as rows, for a program that lists them itself. find's max: in args, or next to them (first)
+    const Json* max = args.at("max") ? args.at("max") : j.at("max");
+    ToolOut out;
+    try {
+        if (!given) out = {Wide(cmd) + L" needs args", true, false, false, L"bad_args"};
+        else if (cmd == "grep.rows") out = ToolGrep(args, true);
+        else if (cmd == "recent.rows") out = ToolRecent(args, true);
+        else out = ToolFind(args, max && max->kind == Json::Num ? static_cast<size_t>(std::clamp(max->n, 1.0, 100000.0)) : 5000);
+    } catch (const std::exception& e) {
+        out = {L"Seek failed: " + Wide(e.what()), true};
+    }
+    g_lastCall = GetTickCount64();
+    return Reply(out);
+}
+
 void Serve(HANDLE pipe) {
     std::string req;
     while (ReadFrame(pipe, req)) {
         Json j;
         std::string reply;
         const Json* exe = nullptr;
+        const Json* tool = nullptr;
+        const Json* api = nullptr;
+        std::string cmd;
         if (!JsonParse(req, j)) {
-            reply = R"({"text":"Bad request","error":true})";
-        } else if (const Json* tool = j.at("tool"); tool && tool->s == "__stop" && (exe = j.at("exe")) && Key(Wide(exe->s)) != Key(ExePath())) {
+            reply = Reply({L"Bad request: not JSON.", true, false, false, L"bad_request"});
+        } else if (api = j.at("api"), api && api->kind == Json::Num && api->n > kApi) {
+            reply = Reply({L"This Seek speaks the protocol for programs up to version " + std::to_wstring(kApi) + L": update Seek for a newer one.", true, false,
+                           false, L"api_too_new"});
+        } else if (tool = j.at("tool"), cmd = tool ? ProgramCommand(tool->s) : "", !cmd.empty()) {
+            reply = ServeProgram(cmd, j, pipe);
+        } else if (tool && tool->s == "__stop" && (exe = j.at("exe")) && Key(Wide(exe->s)) != Key(ExePath())) {
             reply = R"({"text":"not this one"})";  // seek --stop here, from another seek.exe (a build): this one keeps running
         } else if (tool && tool->s == "__status") {  // seek --status, from any build
             reply = "{\"text\":" + JsonQuote(Utf8(StatusText())) + "}";
-        } else if (tool && tool->s == "__status_rows") {  // the indexes, for a program to show (Slate, while the first is made)
-            reply = "{\"text\":" + JsonQuote(Utf8(StatusRows())) + ",\"version\":\"" SEEK_VERSION "\"}";
         } else if (tool && tool->s == "__stats") {  // seek --stats
             const Json* days = j.at("days");
             reply = "{\"text\":" + JsonQuote(Utf8(StatsText(days && days->kind == Json::Num ? std::max(1, static_cast<int>(days->n)) : 14))) + "}";
-        } else if (tool && (tool->s == "__rows" || tool->s == "__grep_rows" || tool->s == "__recent_rows")) {
-            // Programs that list the answers themselves (Seek's window, Slate), of any version: find, grep and recent
-            // as rows. Not written to the log, not counted as an agent's calls.
-            const Json* args = j.at("args");
-            const Json* max = j.at("max");
-            ToolOut out;
-            try {
-                if (!args) out = {Wide(tool->s) + L" needs args", true};
-                else if (tool->s == "__grep_rows") out = ToolGrep(*args, true);
-                else if (tool->s == "__recent_rows") out = ToolRecent(*args, true);
-                else out = ToolFind(*args, max && max->kind == Json::Num ? static_cast<size_t>(std::clamp(max->n, 1.0, 100000.0)) : 5000);
-            } catch (const std::exception& e) {
-                out = {L"Seek failed: " + Wide(e.what()), true};
-            }
-            g_lastCall = GetTickCount64();
-            reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + ",\"version\":\"" SEEK_VERSION "\"}";
-        } else if (tool && tool->s == "__opened") {  // a program opened this file: it ranks as used, and recent lists it
-            const Json* args = j.at("args");
-            const Json* p = args ? args->at("path") : nullptr;
-            const bool ok = p && p->kind == Json::Str && ActOpened(Normalize(Wide(p->s)));
-            reply = ok ? R"({"text":"ok"})" : R"({"text":"__opened needs the path of a file that exists","error":true})";
         } else if (tool && tool->s == "__tools") {  // a session of an older Seek gives its client this version's tools
             reply = "{\"tools\":" + ToolsLine() + "}";
         } else {
@@ -209,7 +260,7 @@ void Serve(HANDLE pipe) {
             ToolOut out = RunTool(tool ? tool->s : "", args ? *args : empty, client ? Wide(client->s) : L"");
             // with its version: a session of an older one learns from it that there are newer tools (a few bytes, read
             // by the session's seek.exe, never by the agent)
-            reply = "{\"text\":" + JsonQuote(Utf8(out.text)) + ",\"error\":" + (out.error ? "true" : "false") + ",\"version\":\"" SEEK_VERSION "\"}";
+            reply = Reply(out);
         }
         if (!WriteFrame(pipe, reply)) break;
     }

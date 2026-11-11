@@ -7,6 +7,7 @@ struct ToolOut {
     bool error = false;
     bool nothing = false;  // it found nothing
     bool cut = false;      // the time budget ended it: the answer is part of what there is
+    std::wstring code;     // an error's kind, for programs (PROTOCOL.md): bad_args, not_found... ("failed" when empty)
 };
 
 std::wstring ArgStr(const Json& a, const char* k) {
@@ -85,14 +86,19 @@ std::wstring IndexAge() {
 }
 
 // Checks a folder argument: empty when fine, or what is wrong.
-std::wstring CheckFolder(const std::wstring& path, bool fileOk) {
+// What is wrong with a path given, or nothing; code: the error's kind, for programs.
+std::wstring CheckFolder(const std::wstring& path, bool fileOk, std::wstring* code = nullptr) {
+    auto bad = [&](const wchar_t* c, const std::wstring& why) {
+        if (code) *code = c;
+        return why;
+    };
     if (path.size() < 3 || path[1] != L':') {
-        if (path.rfind(L"\\\\", 0) != 0) return L"Give a full path, like C:\\Users\\me\\project.";
+        if (path.rfind(L"\\\\", 0) != 0) return bad(L"bad_args", L"Give a full path, like C:\\Users\\me\\project.");
     }
-    if (Private(Key(path))) return L"That place is private: Seek doesn't look there.";
+    if (Private(Key(path))) return bad(L"private", L"That place is private: Seek doesn't look there.");
     const DWORD at = GetFileAttributesW(LongPath(path).c_str());
-    if (at == INVALID_FILE_ATTRIBUTES) return L"Not found: " + path;
-    if (!fileOk && !(at & FILE_ATTRIBUTE_DIRECTORY)) return L"That is a file; give the folder it is in.";
+    if (at == INVALID_FILE_ATTRIBUTES) return bad(L"not_found", L"Not found: " + path);
+    if (!fileOk && !(at & FILE_ATTRIBUTE_DIRECTORY)) return bad(L"not_a_folder", L"That is a file; give the folder it is in.");
     return L"";
 }
 
@@ -196,7 +202,7 @@ IgnoreMap MakeIgnoreMap(const Volume& v, uint32_t vol, uint32_t root, const std:
 // names, a typo) or "scattered". Nothing is read from the drive for them: the program reads what it shows.
 ToolOut ToolFind(const Json& a, size_t rows = 0) {
     const std::wstring query = Trim(ArgStr(a, "query"));
-    if (query.empty()) return {L"find needs a query: a name or part of one, like \"report\", \"jolt.exe\", \".blend\" or \"*.log\".", true};
+    if (query.empty()) return {L"find needs a query: a name or part of one, like \"report\", \"jolt.exe\", \".blend\" or \"*.log\".", true, false, false, L"bad_args"};
     std::wstring scope = ArgStr(a, "path"), nearDir = ArgStr(a, "near");
     if (!scope.empty()) scope = Normalize(Expand(scope));
     if (!nearDir.empty()) nearDir = Normalize(Expand(nearDir));
@@ -206,15 +212,17 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     const std::wstring type = Lower(ArgStr(a, "type"));
     if (type == L"file" || type == L"files") q.kind = 2;
     if (type == L"folder" || type == L"folders" || type == L"dir") q.kind = 1;
-    if (q.Empty() && q.kind == 0) return {L"That query only leaves things out: add a name, an extension or a wildcard.", true};
+    if (q.Empty() && q.kind == 0) return {L"That query only leaves things out: add a name, an extension or a wildcard.", true, false, false, L"bad_args"};
     if (!q.Names() && !q.pathParts.empty())
         return {L"\"" + query + L"\" says where to look, not what: add a name, an extension or a wildcard after the slash, like \"" + query + L"report\" or \"" +
                     query + L"*.md\".",
-                true};
+                true, false, false, L"bad_args"};
+    std::wstring code;
     if (!scope.empty())
-        if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
+        if (std::wstring bad = CheckFolder(scope, false, &code); !bad.empty()) return {bad, true, false, false, code};
     // a folder doesn't need the index: one on a drive without it yet is walked
-    if (!WaitIndex(scope.empty() ? 30000 : 3000) && scope.empty()) return {L"The drive index is still loading. Try again in a few seconds.", true};
+    if (!WaitIndex(scope.empty() ? 30000 : 3000) && scope.empty())
+        return {L"The drive index is still loading. Try again in a few seconds.", true, false, false, L"index_loading"};
     WaitCatchUp(10000);
     std::wstring building = scope.empty() ? IndexingNote() : L"";
     LoadUsage();
@@ -648,11 +656,11 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
     const auto started = std::chrono::steady_clock::now();
     GrepQuery q;
     q.pattern = ArgStr(a, "pattern");
-    if (q.pattern.empty()) return {L"grep needs a pattern: the text to look for.", true};
+    if (q.pattern.empty()) return {L"grep needs a pattern: the text to look for.", true, false, false, L"bad_args"};
     q.root = ArgStr(a, "path");
-    if (q.root.empty()) return {L"grep needs a path: the folder (or file) to search in. To find files by name anywhere, use find.", true};
+    if (q.root.empty()) return {L"grep needs a path: the folder (or file) to search in. To find files by name anywhere, use find.", true, false, false, L"bad_args"};
     q.root = Normalize(Expand(q.root));
-    if (std::wstring bad = CheckFolder(q.root, true); !bad.empty()) return {bad, true};
+    if (std::wstring code, bad = CheckFolder(q.root, true, &code); !bad.empty()) return {bad, true, false, false, code};
     q.regex = ArgBool(a, "regex", false);
     q.without = ArgStr(a, "without");
     const std::wstring cs = Lower(ArgStr(a, "case"));
@@ -681,7 +689,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
     const std::wstring base = isFile ? ParentOf(q.root) : q.root;
 
     GrepResult r = RunGrep(q);
-    if (!r.error.empty()) return {r.error, true};
+    if (!r.error.empty()) return {r.error, true, false, false, L"bad_args"};  // a regex that doesn't parse, mostly
     std::wstring note, how = L"asked";
     if (r.files.empty() && !q.ignoreCase && !q.regex) {  // the exact case said no: what ignoring it finds
         GrepQuery q2 = q;
@@ -856,7 +864,7 @@ ToolOut ToolRecent(const Json& a, bool rows = false) {
     std::wstring scope = ArgStr(a, "path");
     if (!scope.empty()) {
         scope = Normalize(Expand(scope));
-        if (std::wstring bad = CheckFolder(scope, false); !bad.empty()) return {bad, true};
+        if (std::wstring code, bad = CheckFolder(scope, false, &code); !bad.empty()) return {bad, true, false, false, code};
     }
     const std::wstring query = Trim(ArgStr(a, "query"));
     const NameQuery q = ParseNameQuery(query);
@@ -1279,7 +1287,7 @@ ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& c
         if (name == "find") out = ToolFind(args);
         else if (name == "grep") out = ToolGrep(args);
         else if (name == "recent") out = ToolRecent(args);
-        else out = {L"Unknown tool: " + Wide(name) + L". The tools are find, grep and recent.", true};
+        else out = {L"Unknown tool: " + Wide(name) + L". The tools are find, grep and recent.", true, false, false, L"unknown_command"};
     } catch (const std::exception& e) {
         out = {L"Seek failed: " + Wide(e.what()), true};
     }
