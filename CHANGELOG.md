@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.6
+
+- **`find` takes `{alpha,beta gamma}` as "a name with one of these in it".** A group in braces on its own was read as a wildcard that had to be the whole name, so `{report,summary} .pdf` found nothing even with both files there, and a space inside the braces split the query into words. Now a space inside braces belongs to the alternative, and braces alone match names that have one of the alternatives as typed, as whole words, like "in quotes". With the rest of a name around them (`{alpha,beta}.stl`, `*{2024,2025}*`) they are still a wildcard.
+
 ## 0.4.5
 
 - **`find` with a folder and an extension, like `docs/ .png`, finds what is in that folder.** A part of the path was looked at only among the best 2,000 names kept, and with nothing but an extension or a common word those are the shallowest on the PC: a folder a few levels down had none of them, and the answer was "Nothing named like that" with the files right there. `src/main` listed a fraction of what it should for the same reason. Now the path is checked for every name that matches, so the list, its count and `summary` are of that folder.
