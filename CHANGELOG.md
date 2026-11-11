@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- **`find` finds a folder by its own dot name: `.git`, `.vscode`, `.github`.** A query like `.git` is an extension filter, and an extension never matched a folder, so a search for `.git` folders listed only the small `.git` files of worktrees, and below a repository answered "Nothing named like". Now a name that is exactly what was typed matches as a folder too, as a dotfile like `.gitignore` already did as a file. Files with that extension still match (`app.vscode`), and `type: folder` keeps only the folders. Inside a repository, `.git` is among what `find` leaves out below a folder, so it is shown from there, saying so.
+
 ## 0.5.0
 
 Seek's protocol for programs, version 1: what any program can count on when it asks Seek through its pipe. The first step for client packages in Rust, Python and npm ([roadmap](https://github.com/SynrgStudio/seek/issues/27)).

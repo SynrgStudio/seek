@@ -3,8 +3,8 @@
 
 [project]
 name = "Seek"
-version = "0.5.0"
-released = 2026-11-11
+version = "0.5.1"
+released = 
 license = "GPL-3.0"
 platforms = ["Windows 10", "Windows 11"]
 repo = "https://github.com/SynrgStudio/seek"
@@ -451,307 +451,307 @@ value = 12
 unit = "bytes"
 what = "the size of one name's entry in the drive index (Jolt's format): parent, name, folder or not, depth"
 source = "src/index.inl"
-date = 2026-11-11
+date = 
 
 [facts.name_scan_threads]
 value = 16
 unit = "threads"
 what = "at most, to run every name through the fuzzy matching; one for under 100,000 names"
 source = "src/index.inl"
-date = 2026-11-11
+date = 
 
 [facts.index_walk_threads]
 value = 8
 unit = "threads"
 what = "at most, to walk a drive when Seek makes its own index"
 source = "src/index.inl"
-date = 2026-11-11
+date = 
 
 [facts.grep_threads]
 value = 12
 unit = "threads"
 what = "at most, to list a folder and read its files"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.binary_probe_kb]
 value = 8
 unit = "KB"
 what = "what grep reads of a file to tell it is binary; then the rest isn't read"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.grep_file_max_mb]
 value = 16
 unit = "MB"
 what = "files over this aren't read by grep in a folder (named in the answer); a file given as the path is read whatever its size"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.grep_line_chars]
 value = 240
 unit = "characters"
 what = "a line longer than this is shown around its matches only"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.grep_line_windows]
 value = 4
 unit = "windows"
 what = "how many matches of one long line are shown, each with what is around it"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.grep_context_max]
 value = 200
 unit = "lines"
 what = "the most context grep shows on each side of a match (before, after)"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.regex_line_chars]
 value = 4096
 unit = "characters"
 what = "regex looks at this many characters of a very long line"
 source = "src/grep.inl"
-date = 2026-11-11
+date = 
 
 [facts.cache_mb]
 value = 512
 unit = "MB"
 what = "folders kept in memory for grep, at most, by default (cache in seek.txt)"
 source = "src/util.inl"
-date = 2026-11-11
+date = 
 
 [facts.cache_idle_min]
 value = 20
 unit = "min"
 what = "a folder nobody searched for this long is let go"
 source = "src/cache.inl"
-date = 2026-11-11
+date = 
 
 [facts.cache_changes_max]
 value = 20000
 unit = "changes"
 what = "more changes than this between two searches, and a kept folder is read again whole"
 source = "src/cache.inl"
-date = 2026-11-11
+date = 
 
 [facts.ranked_results]
 value = 2000
 unit = "results"
 what = "the best names by name that find ranks again by what the user is doing, and pages through"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.jolt_check_min]
 value = 10
 unit = "min"
 what = "how often Seek looks for a newer copy of Jolt's index (and of its own)"
 source = "src/server.inl"
-date = 2026-11-11
+date = 
 
 [facts.activity_save_min]
 value = 5
 unit = "min"
 what = "how often what Seek saw change is saved to disk"
 source = "src/server.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_changed_hour]
 value = 3000
 unit = "points"
 what = "points for a file changed in the last hour"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_changed_day]
 value = 1500
 unit = "points"
 what = "points for one changed in the last day"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_changed_week]
 value = 600
 unit = "points"
 what = "points for one changed in the last week"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_jolt_folder_max]
 value = 1200
 unit = "points"
 what = "points, at most, for a file in a folder the user opens in Jolt, by how much it is used"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_jolt_file_max]
 value = 2000
 unit = "points"
 what = "points, at most, for a file the user opened from Jolt"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_jolt_picked_max]
 value = 5000
 unit = "points"
 what = "points, at most, for a file picked in Jolt's Ctrl+P for this very text"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_near]
 value = 2500
 unit = "points"
 what = "points for a file inside the folder given as near"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_near_level]
 value = 150
 unit = "points"
 what = "points for each folder level shared with near, otherwise"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.rank_noise]
 value = 2000
 unit = "points"
 what = "points taken from a file in a cache, a package store, a log or AppData"
 source = "src/tools.inl"
-date = 2026-11-11
+date = 
 
 [facts.protocol_version]
 value = 1
 what = "the version of Seek's protocol for programs (PROTOCOL.md)"
 source = "src/server.inl"
-date = 2026-11-11
+date = 
 
 [facts.fff_agent_shell_s]
 value = 24.7
 unit = "s"
 what = "fff's README: a whole agent task in a big repository with shell search (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_agent_fff_s]
 value = 14.3
 unit = "s"
 what = "fff's README: the same task with fff (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_agent_shell_tokens]
 value = 85400
 unit = "tokens"
 what = "fff's README: that task's tokens with shell search (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_agent_fff_tokens]
 value = 82500
 unit = "tokens"
 what = "fff's README: with fff (almost the same) (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_heldout_fff_s]
 value = 9.0
 unit = "s"
 what = "fff's README: a held-out run where one model was slower with fff (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_heldout_shell_s]
 value = 8.1
 unit = "s"
 what = "fff's README: the same held-out run with shell search (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_chromium_files]
 value = 500000
 unit = "files"
 what = "fff's README: the Chromium checkout of its test (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_chromium_ripgrep_s_min]
 value = 3
 unit = "s"
 what = "fff's README: each ripgrep run on that checkout, from (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_chromium_ripgrep_s_max]
 value = 9
 unit = "s"
 what = "fff's README: each ripgrep run on that checkout, to (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.fff_chromium_query_ms_max]
 value = 10
 unit = "ms"
 what = "fff's README: each fff query on that checkout, under (measured by others, on their machines)"
 source = "https://github.com/dmtrKovalenko/fff"
-date = 2026-11-11
+date = 
 
 [facts.everything_index_min_per_million]
 value = 1
 unit = "min"
 what = "Everything's FAQ: indexing about a million files (measured by others, on their machines)"
 source = "https://www.voidtools.com/faq/"
-date = 2026-11-11
+date = 
 
 [facts.everything_mb_per_million]
 value = 100
 unit = "MB"
 what = "Everything's FAQ: memory for about a million files (measured by others, on their machines)"
 source = "https://www.voidtools.com/faq/"
-date = 2026-11-11
+date = 
 
 [facts.ripgrep_kernel_s]
 value = 0.082
 unit = "s"
 what = "ripgrep's README, the Linux kernel's source: ripgrep (measured by others, on their machines)"
 source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
-date = 2026-11-11
+date = 
 
 [facts.ripgrep_kernel_git_grep_s]
 value = 0.273
 unit = "s"
 what = "the same: git grep -P (measured by others, on their machines)"
 source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
-date = 2026-11-11
+date = 
 
 [facts.ripgrep_kernel_ag_s]
 value = 0.443
 unit = "s"
 what = "the same: The Silver Searcher (measured by others, on their machines)"
 source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
-date = 2026-11-11
+date = 
 
 [facts.ripgrep_kernel_ugrep_s]
 value = 0.639
 unit = "s"
 what = "the same: ugrep (measured by others, on their machines)"
 source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
-date = 2026-11-11
+date = 
 
 [facts.ripgrep_kernel_ack_s]
 value = 2.9
 unit = "s"
 what = "the same: ack (measured by others, on their machines)"
 source = "https://github.com/BurntSushi/ripgrep#quick-examples-comparing-tools"
-date = 2026-11-11
+date = 
 
 [facts.claude_glob_timeout_s]
 value = 20
 unit = "s"
 what = "users' reports: Claude Code's Glob tool timing out in large repositories, where ripgrep alone takes under a second (measured by others, on their machines)"
 source = "https://github.com/anthropics/claude-code/issues"
-date = 2026-11-11
+date = 
 
 [media.icon]
 file = "seek-512.png"

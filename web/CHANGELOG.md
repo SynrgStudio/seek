@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-11, Seek 0.5.1
+
+- `project.version` is 0.5.1.
+- `notes/tools.md`: a query like `.git` also finds folders with exactly that name.
+
 ## 2026-11-11
 
 The corpus is new, for seek.synrgs.tech built by PORTFOLIO. It holds everything the old page (`site/`) said, updated to Seek 0.5.0.

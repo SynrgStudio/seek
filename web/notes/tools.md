@@ -25,7 +25,7 @@ The query:
 |---|---|
 | `report 2026` | words in the name, in order, fuzzy |
 | `"two words"` | as typed, as whole words |
-| `.png`, `ext:png,jpg` | the extension |
+| `.png`, `ext:png,jpg` | the extension; a file or folder named exactly that matches too (`.gitignore`, a `.git` or `.vscode` folder) |
 | `*`, `?` | wildcards on the name; `{a,b}` either |
 | `{alpha,beta gamma}` on its own | a name with one of those in it, as typed (spaces allowed) |
 | `!word` | names without the word |

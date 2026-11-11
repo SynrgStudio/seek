@@ -443,9 +443,13 @@ check("mcp: and knows it again when it is made again, once", r["result"]["conten
 put("repo/movable/inner/deep_moved.txt", "moved along with its folder\n")
 time.sleep(1.5)
 os.rename(os.path.join(ROOT, "repo", "movable"), os.path.join(ROOT, "repo", "moved_here"))
-time.sleep(2.0)
-r = rpc({"jsonrpc": "2.0", "id": 73, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "deep_moved"}}})
-text = r["result"]["content"][0]["text"]
+# what is inside is walked on a thread of its own: asked again until it is there, for up to 10 s (a busy PC is slower)
+for attempt in range(20):
+    time.sleep(0.5)
+    r = rpc({"jsonrpc": "2.0", "id": 730 + attempt, "method": "tools/call", "params": {"name": "find", "arguments": {"query": "deep_moved"}}})
+    text = r["result"]["content"][0]["text"]
+    if "moved_here\\inner\\deep_moved.txt" in text and "movable\\" not in text:
+        break
 check("mcp: find follows what is inside a renamed folder", "moved_here\\inner\\deep_moved.txt" in text and "movable\\" not in text, text)
 r = rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "nope", "arguments": {}}})
 check("mcp: unknown tool is a protocol error", r.get("error", {}).get("code") == -32602, json.dumps(r))
