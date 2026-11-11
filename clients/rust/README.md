@@ -32,6 +32,7 @@ This crate is a client, as a database driver is: it doesn't hold an index of its
 - **One index for everyone.** Every program and AI agent on the PC shares one index of every drive. The drive watchers keep it current, even while your program is closed.
 - **The cost.** Your program pays about 0.1 ms per request on the pipe. The search itself takes 20 to 50 ms on millions of names.
 - **No dependencies.** Nothing but the standard library.
+- **It waits out a Seek that is starting**: for its pipe to appear, and for up to 5 s more when a search answers that the indexes are still loading.
 - **It never waits forever.** Each reply has a time limit, as long as its command can take (PROTOCOL.md, "Timeouts"); past it the request fails with `Error::TimedOut`, and the next one opens a new connection. `Builder::timeout` sets one limit for all.
 
 `Seek::connect` follows Seek's rule for starting it:
@@ -74,7 +75,7 @@ seek-client = { version = "1", features = ["bundled"] }
 **When it runs,** the Seek it carries is one more candidate in the rule for starting Seek:
 
 - The newest is started. At the same version, the installed one wins.
-- The one it carries is written to disk only when it is the one to start, as `%LOCALAPPDATA%\<app>\seek\seek-<version>.exe`, through a temporary name. `Builder::app("myapp")` sets `<app>`; by default it is `seek-client`, shared by every program that carries the same Seek.
+- The one it carries is written to disk only when it is the one to start, as `%LOCALAPPDATA%\<app>\seek\<version>\seek.exe`, through a temporary name: its process is `seek`, as an installed Seek's. `Builder::app("myapp")` sets `<app>`; by default it is `seek-client`, shared by every program that carries the same Seek.
 - Older versions there are deleted when nothing runs them.
 - A newer Seek installed later replaces it on its own (see PROTOCOL.md, "Starting Seek").
 

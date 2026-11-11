@@ -26,15 +26,23 @@ fn same(a: &Path, b: &Path) -> bool {
 fn the_seek_it_carries_is_started_when_there_is_no_other() {
     let home = folder("bundled-home");
     let dir = folder("bundled-exe");
-    fs::write(dir.join("seek-0.0.1.exe"), b"an older one, left by an older build").unwrap();
+    fs::write(dir.join("seek-0.0.1.exe"), b"an older one, as the first bundled builds wrote it").unwrap();
+    fs::create_dir_all(dir.join("0.0.2")).unwrap();
+    fs::write(dir.join(r"0.0.2\seek.exe"), b"an older one, in its own folder").unwrap();
     let connect = || Seek::builder().home(Some(home.clone())).installed_exe(None).bundled_dir(&dir).client("seek-client tests").connect();
 
     let seek = connect().expect("start the bundled Seek");
     let hello = seek.hello().unwrap();
-    let written = dir.join(format!("seek-{}.exe", BUNDLED_SEEK.unwrap()));
+    let written = dir.join(BUNDLED_SEEK.unwrap()).join("seek.exe");
     assert_eq!(Some(hello.version.as_str()), BUNDLED_SEEK);
     assert!(same(&hello.exe, &written), "{hello:?}");
-    assert!(!dir.join("seek-0.0.1.exe").exists(), "the older one is deleted");
+    assert!(!dir.join("seek-0.0.1.exe").exists() && !dir.join("0.0.2").exists(), "the older ones are deleted");
+    // its process is seek, as an installed Seek's
+    let ps = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!("(Get-Process -Id {}).ProcessName", hello.pid)])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&ps.stdout).trim(), "seek");
     let before = fs::metadata(&written).unwrap().modified().unwrap();
     drop(seek);
 

@@ -75,6 +75,51 @@ fn silent_seek(name: String) {
     std::thread::sleep(Duration::from_millis(200));
 }
 
+/// A pretend Seek whose indexes are loading: find answers index_loading the first `loading` times, then rows.
+fn loading_seek(name: String, loading: usize) {
+    std::thread::spawn(move || {
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        loop {
+            // SAFETY: a byte-mode duplex pipe with this name.
+            let h = unsafe { CreateNamedPipeW(wide.as_ptr(), 3, 0, 255, 65536, 65536, 0, std::ptr::null()) };
+            assert_ne!(h, -1, "CreateNamedPipeW");
+            // SAFETY: the pipe just made.
+            unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) };
+            let asked = asked.clone();
+            std::thread::spawn(move || {
+                while let Some(req) = read_frame(h) {
+                    let req = String::from_utf8_lossy(&req);
+                    let reply: &[u8] = if req.contains("\"tool\":\"hello\"") {
+                        br#"{"api":1,"apis":[1],"version":"9.9.9","error":false}"#
+                    } else if asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < loading {
+                        br#"{"api":1,"version":"9.9.9","text":"The drive index is still loading.","error":true,"code":"index_loading"}"#
+                    } else {
+                        br##"{"api":1,"version":"9.9.9","text":"#rows\t1\t1\treal\nF\tC:\\a.txt\n","error":false}"##
+                    };
+                    let mut msg = (reply.len() as u32).to_le_bytes().to_vec();
+                    msg.extend_from_slice(reply);
+                    let mut n = 0u32;
+                    // SAFETY: msg is alive for the call.
+                    unsafe { WriteFile(h, msg.as_ptr(), msg.len() as u32, &mut n, std::ptr::null_mut()) };
+                }
+            });
+        }
+    });
+    std::thread::sleep(Duration::from_millis(200));
+}
+
+#[test]
+fn index_loading_is_waited_out() {
+    let home = format!(r"C:\seek-client-loading-test-{}", std::process::id());
+    loading_seek(pipe_for(&home), 3);
+    let seek = Seek::builder().home(Some(PathBuf::from(&home))).installed_exe(None).no_start().connect().unwrap();
+    let t = Instant::now();
+    let found = seek.find("a").run().expect("answered once the indexes are loaded");
+    assert_eq!(found.entries.len(), 1);
+    assert!(t.elapsed() >= Duration::from_millis(550), "asked again three times, 200 ms apart: {:?}", t.elapsed());
+}
+
 #[test]
 fn a_seek_that_stops_answering_times_out() {
     let home = format!(r"C:\seek-client-timeout-test-{}", std::process::id());

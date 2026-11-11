@@ -35,6 +35,9 @@ use pipe::Version;
 /// The protocol version this crate speaks.
 pub const PROTOCOL: u32 = 1;
 
+/// How long a request that Seek answers with [`Code::IndexLoading`] is asked again.
+const INDEX_LOADING_WAIT: Duration = Duration::from_secs(5);
+
 /// The Seek release this build carries, with the `bundled` feature: "0.5.1". `None` without it.
 #[cfg(feature = "bundled")]
 pub const BUNDLED_SEEK: Option<&str> = Some(env!("SEEK_CLIENT_BUNDLED_VERSION"));
@@ -224,7 +227,7 @@ impl Builder {
         self
     }
     /// With the `bundled` feature: where the seek.exe it carries is written when it is the one to start, as
-    /// `%LOCALAPPDATA%\<name>\seek\seek-<version>.exe`. By default `<name>` is `seek-client`, shared by every program
+    /// `%LOCALAPPDATA%\<name>\seek\<version>\seek.exe`. By default `<name>` is `seek-client`, shared by every program
     /// that carries the same Seek.
     pub fn app(mut self, name: &str) -> Self {
         self.bundled_dir = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(name).join("seek"));
@@ -411,16 +414,21 @@ impl Seek {
 
     /// One request, connecting first when needed; once again on a new connection when the old one broke (Seek was
     /// updated, or restarted).
+    ///
+    /// Right after Seek starts, a search on every drive can answer that the indexes are still loading: it is asked
+    /// again, every 200 ms, for up to 5 s, as a Seek that is still starting is waited for.
     fn ask(&self, tool: &str, args: &Args) -> Result<Value> {
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        for attempt in 0..2 {
+        let started = std::time::Instant::now();
+        let mut reconnected = false;
+        loop {
             self.ensure(&mut conn)?;
             match self.ask_on(&mut conn, tool, args) {
-                Err(Error::Io(_)) if attempt == 0 => continue,
+                Err(Error::Io(_)) if !reconnected => reconnected = true,
+                Err(Error::Seek { code: Code::IndexLoading, .. }) if started.elapsed() < INDEX_LOADING_WAIT => std::thread::sleep(Duration::from_millis(200)),
                 other => return other,
             }
         }
-        unreachable!()
     }
 
     fn rows(&self, tool: &str, args: &Args) -> Result<(Vec<String>, Vec<Vec<String>>)> {
@@ -511,17 +519,20 @@ impl Seek {
     }
 }
 
-/// Writes the seek.exe this build carries as `<dir>\seek-<version>.exe`, unless it is there already (the same bytes),
-/// through a temporary name, so that no half-written seek.exe is ever started. The other versions there are deleted
-/// when nothing runs them: a running seek.exe can't be.
+/// Writes the seek.exe this build carries as `<dir>\<version>\seek.exe`, unless it is there already (the same bytes),
+/// through a temporary name, so that no half-written seek.exe is ever started. Its own folder per version keeps the
+/// file's name, so its process is `seek` as an installed Seek's is (Task Manager, scripts, `Get-Process seek`). The
+/// other versions' folders are deleted when nothing runs them: a running seek.exe can't be. So are the seek-<version>.exe
+/// files the crate wrote before (1.0.0's first bundled builds).
 #[cfg(feature = "bundled")]
 fn write_bundled(dir: &Path) -> std::io::Result<PathBuf> {
     let version = BUNDLED_SEEK.unwrap_or("0");
-    let path = dir.join(format!("seek-{version}.exe"));
+    let folder = dir.join(version);
+    let path = folder.join("seek.exe");
     let same = |p: &Path| std::fs::read(p).map(|b| b.len() == BUNDLED_EXE.len() && sha256::hex(&b) == sha256::hex(BUNDLED_EXE)).unwrap_or(false);
     if !same(&path) {
-        std::fs::create_dir_all(dir)?;
-        let part = dir.join(format!("seek-{version}.exe.{}.part", std::process::id()));
+        std::fs::create_dir_all(&folder)?;
+        let part = folder.join(format!("seek.exe.{}.part", std::process::id()));
         std::fs::write(&part, BUNDLED_EXE)?;
         if let Err(e) = std::fs::rename(&part, &path) {
             let _ = std::fs::remove_file(&part);
@@ -533,7 +544,11 @@ fn write_bundled(dir: &Path) -> std::io::Result<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_lowercase();
-            if name.starts_with("seek-") && (name.ends_with(".exe") || name.ends_with(".part")) && e.path() != path {
+            let other_version = e.path() != folder && e.file_type().map(|t| t.is_dir()).unwrap_or(false) && pipe::parse_version(&name).is_some();
+            let old_layout = name.starts_with("seek-") && (name.ends_with(".exe") || name.ends_with(".part"));
+            if other_version {
+                let _ = std::fs::remove_dir_all(e.path()); // fails, and is left, while its seek.exe runs
+            } else if old_layout {
                 let _ = std::fs::remove_file(e.path());
             }
         }
