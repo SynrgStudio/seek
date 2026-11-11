@@ -3,3 +3,5 @@ build/
 _site/
 __pycache__/
 *.pyc
+clients/rust/target/
+clients/rust/Cargo.lock

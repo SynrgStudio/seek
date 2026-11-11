@@ -1,0 +1,15 @@
+[package]
+name = "seek-client"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Seek for any Windows program: file names on every drive in milliseconds, text in folders, and what the user changed lately, from Seek's background process."
+repository = "https://github.com/SynrgStudio/seek"
+homepage = "https://seek.synrgs.tech"
+documentation = "https://github.com/SynrgStudio/seek/blob/main/PROTOCOL.md"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["search", "files", "windows", "index", "grep"]
+categories = ["filesystem", "os::windows-apis"]
+
+[dependencies]
