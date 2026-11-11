@@ -9,7 +9,7 @@ corpus (see web/README in synrgs-web's CORPUS.md), and asks for each number by i
 The prose is in web/notes/, the rules in web/rules.md, the corpus' own history in web/CHANGELOG.md: those are written
 by hand. A number in a note is written with its fact's key after it, like 52 ms [find_ms].
 """
-import functools, json, os, re, subprocess, sys
+import datetime, functools, json, os, re, subprocess, sys, tomllib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -42,15 +42,19 @@ SHELL = "bench/results.json, a separate run of the shell tools (a ten-minute wal
 
 @functools.cache
 def released():
-    """The date of this version's release on GitHub; the version's commit date when gh can't say. Asked once."""
+    """The date of this version's release on GitHub; the version's commit date when gh can't say. Before the version is
+    released or even committed (the corpus is written as part of releasing it), today, in UTC as GitHub dates releases:
+    a release is published the day it is made. Never empty: an empty date is broken TOML (0.5.1's corpus was). Asked
+    once."""
     try:
         out = subprocess.run(["gh", "release", "view", "v" + VERSION, "--repo", "SynrgStudio/seek", "--json", "publishedAt", "-q", ".publishedAt"],
                              cwd=ROOT, capture_output=True, text=True, timeout=30)
-        if out.returncode == 0 and out.stdout.strip():
+        if out.returncode == 0 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", out.stdout.strip()[:10]):
             return out.stdout.strip()[:10]
     except (OSError, subprocess.TimeoutExpired):
         pass
-    return git("log", "-1", "--format=%cs", "-S", f'SEEK_VERSION "{VERSION}"', "--", "src/version.h")
+    committed = git("log", "-1", "--format=%cs", "-S", f'SEEK_VERSION "{VERSION}"', "--", "src/version.h")
+    return committed or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 
 
 def row(task, tool):
@@ -331,11 +335,35 @@ def note_keys():
     return missing
 
 
+def valid(text, where):
+    """What the website reads must parse, and every fact be whole: as the website's build reads it, with tomllib."""
+    try:
+        d = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"{where} isn't valid TOML: {e}")
+    problems = []
+    if not isinstance(d.get("project", {}).get("released"), datetime.date):
+        problems.append("project.released isn't a date")
+    for key, f in d.get("facts", {}).items():
+        for field in ("value", "what", "source"):
+            if field not in f or f[field] in ("", None):
+                problems.append(f"facts.{key}.{field} is missing")
+        if not isinstance(f.get("date"), datetime.date):
+            problems.append(f"facts.{key}.date isn't a date")
+    if len(d.get("facts", {})) != len(FACTS):
+        problems.append(f"{len(d.get('facts', {}))} facts, not {len(FACTS)}")
+    if problems:
+        raise SystemExit(f"{where}: " + "; ".join(problems[:10]))
+
+
 def main():
     check = "--check" in sys.argv
     missing = note_keys()
     if missing:
         raise SystemExit("notes cite facts that don't exist: " + "; ".join(missing))
+    valid(facts_toml(), "the facts.toml this would write")
+    if check and os.path.exists(os.path.join(WEB, "facts.toml")):
+        valid(open(os.path.join(WEB, "facts.toml"), encoding="utf-8").read(), "web/facts.toml")
     want = {
         os.path.join(WEB, "facts.toml"): facts_toml(),
         os.path.join(WEB, "data", "results.json"): src("bench/results.json"),
