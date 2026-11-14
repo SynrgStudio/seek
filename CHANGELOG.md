@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- **A fourth tool, `sizes`: what takes up the space below a folder or on a whole drive.**
+  - It answers with the biggest folders a few levels down (`depth`), with their share and their files, and the biggest files.
+  - Asked "the 10 heaviest folders on C:", an agent had nothing in Seek, and walked the drive in PowerShell for minutes. `sizes` reads the disk on several threads, the way Seek indexes a drive without Jolt: all of C: here, 2.2 million names, took 3.4 s.
+  - On a drive it compares its total with the space in use. It says what it left out: folders it couldn't read, private places, links and junctions (not followed), files only in the cloud.
+  - `time_budget_ms` caps it, 60 s by default.
+  - The index keeps names, not sizes: keeping sizes in it, so that `sizes` needs no walk and `find` can sort by size, is the next step.
+
 ## 0.5.1
 
 - **`find` finds a folder by its own dot name: `.git`, `.vscode`, `.github`.** A query like `.git` is an extension filter, and an extension never matched a folder, so a search for `.git` folders listed only the small `.git` files of worktrees, and below a repository answered "Nothing named like". Now a name that is exactly what was typed matches as a folder too, as a dotfile like `.gitignore` already did as a file. Files with that extension still match (`app.vscode`), and `type: folder` keeps only the folders. Inside a repository, `.git` is among what `find` leaves out below a folder, so it is shown from there, saying so.

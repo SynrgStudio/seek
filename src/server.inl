@@ -6,7 +6,7 @@
 const char* kInstructions =
     "Seek searches this Windows PC fast. find: files and folders by name anywhere (every drive, live index, typo-tolerant), "
     "instead of dir /s or Get-ChildItem -Recurse; ranks exact names, what the user changed lately and what is near a folder first. "
-    "grep: text inside the files of a folder, also PDF and Office documents. recent: what the user changed or opened lately; "
+    "grep: text inside the files of a folder, also PDF and Office documents. sizes: what takes up the space below a folder or on a drive. recent: what the user changed or opened lately; "
     "use it when they mean 'the file I was working on'. Answers are short: use limit and offset to page, summary for counts.";
 
 const char* kToolsJson = R"JSON([
@@ -55,6 +55,16 @@ const char* kToolsJson = R"JSON([
   "walk":{"type":"boolean","default":true,"description":"With path: also read the dates on disk there. false: only what Seek saw change, which is instant."},
   "limit":{"type":"integer","minimum":1,"maximum":200,"default":20},
   "include_system":{"type":"boolean","default":false}}},
+ "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
+{"name":"sizes","title":"What takes up the space",
+ "description":"How much space the folders and files below a folder, or on a whole drive (C:\\), take: the biggest folders a few levels down, with their share and their files, and the biggest files. Use it for 'what is filling my disk' or 'the heaviest folders'. It reads the disk on several threads (the index keeps names, not sizes): a whole drive takes seconds on an SSD and minutes on a hard disk, and time_budget_ms caps it (the answer says when it stopped). Links and junctions aren't followed, private places aren't looked into, and files only in the cloud aren't counted; on a drive, the answer compares the total with the space in use.",
+ "inputSchema":{"type":"object","properties":{
+  "path":{"type":"string","description":"The folder, or a drive like C:\\."},
+  "depth":{"type":"integer","minimum":1,"maximum":12,"default":3,"description":"Folders are listed up to this many levels below path."},
+  "limit":{"type":"integer","minimum":1,"maximum":200,"default":15,"description":"How many folders to list, the biggest first."},
+  "files":{"type":"integer","minimum":0,"maximum":200,"default":10,"description":"How many of the biggest files to list; 0 for none."},
+  "time_budget_ms":{"type":"integer","minimum":1000,"maximum":600000,"default":60000,"description":"How long it may read the disk."}},
+  "required":["path"]},
  "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}
 ])JSON";
 
@@ -530,7 +540,7 @@ std::string Handle(const Json& msg, std::wstring& client) {
         }
         // a tool this version doesn't know may be a newer one's: then the background process answers for it
         if (!name || name->kind != Json::Str || (name->s != "find" && name->s != "grep" && name->s != "recent" && !newer))
-            return error(-32602, "Unknown tool: " + (name && name->kind == Json::Str ? name->s : std::string("(none)")) + ". The tools are find, grep and recent.");
+            return error(-32602, "Unknown tool: " + (name && name->kind == Json::Str ? name->s : std::string("(none)")) + ". The tools are find, grep, recent and sizes.");
         if (args && args->kind != Json::Obj && args->kind != Json::Null) return error(-32602, "The arguments must be an object.");
         static const Json empty = [] {
             Json e;

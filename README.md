@@ -22,13 +22,14 @@ Every drive in milliseconds, text in folders faster than ripgrep and fff, and an
 
 Coding agents spend a surprising part of their time looking for files, with tools made for people. A recursive `dir` of a user profile takes a minute and a half. Listing every `.blend` file on a PC is about 196,000 tokens of context. And "the file I was working on" means nothing to a shell.
 
-Seek gives the agent three tools that answer those questions directly:
+Seek gives the agent four tools that answer those questions directly:
 
 | tool | what it does |
 |---|---|
 | **`find`** | Files and folders by name on every fixed drive, from an index, in milliseconds. Typo-tolerant, and ranked by what the user changed lately and the folders they use. `summary` gives counts by area instead of a list. |
 | **`grep`** | Text inside the files of a folder, and inside its PDF and Office documents. Follows `.gitignore`. After a folder's first search, it is kept in memory and kept current by the drive watchers. |
 | **`recent`** | What the user created, changed and opened lately, without the logs and caches programs write all the time. |
+| **`sizes`** | What takes up the space below a folder or on a whole drive: the biggest folders a few levels down, and the biggest files. It reads the disk on several threads, so a whole SSD takes seconds. |
 
 One background process serves every agent on the PC. It keeps the index, watches the drives, and remembers what changed. Seek only reads, never looks in private places such as keys, browser profiles or password managers, and logs every call for the user to see.
 
@@ -87,7 +88,7 @@ For any other MCP client, such as Cursor, Cline or Claude Desktop, add a stdio s
 A line in the project's `CLAUDE.md` or `AGENTS.md` helps the agent reach for it:
 
 ```
-To find files by name anywhere on this PC, or search text in a folder, use the seek tools (find, grep, recent) instead of shell commands.
+To find files by name anywhere on this PC, or search text in a folder, use the seek tools (find, grep, recent, sizes) instead of shell commands.
 ```
 
 ## How it works

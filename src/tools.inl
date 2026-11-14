@@ -1278,6 +1278,187 @@ std::wstring StatsText(int days) {
                  L"The command line and Seek's own tests and benchmark aren't counted. Kept in " + StatsFile() + L"\n";
 }
 
+// ---- sizes
+
+// How much space the folders and files below a folder take: the biggest folders a few levels down, and the biggest
+// files. The index keeps names, not sizes, so this reads the disk, on several threads, as Seek walks a drive for an
+// index of its own. Links and junctions aren't followed (what they point to is counted where it is), private places
+// aren't looked into, and files only in the cloud aren't counted: they take no room on this disk.
+ToolOut ToolSizes(const Json& a) {
+    std::wstring root = ArgStr(a, "path");
+    if (root.empty()) return {L"sizes needs a path: a folder, or a drive like C:\\.", true, false, false, L"bad_args"};
+    root = Normalize(Expand(root));
+    std::wstring code;
+    if (std::wstring bad = CheckFolder(root, false, &code); !bad.empty()) return {bad, true, false, false, code};
+    const int depthMax = ArgInt(a, "depth", 3, 1, 12);
+    const int limit = ArgInt(a, "limit", 15, 1, 200);
+    const size_t filesMax = static_cast<size_t>(ArgInt(a, "files", 10, 0, 200));
+    const uint64_t budgetMs = static_cast<uint64_t>(ArgInt(a, "time_budget_ms", 60000, 1000, 600000));
+    const auto started = std::chrono::steady_clock::now();
+    const uint64_t deadline = GetTickCount64() + budgetMs;
+
+    struct Dir {
+        uint32_t parent;
+        int depth;
+        std::wstring path;
+        uint64_t bytes = 0, files = 0;  // its own files; then, below, everything under it
+    };
+    struct Big {
+        uint64_t size;
+        std::wstring path;
+    };
+    std::vector<Dir> dirs{{UINT32_MAX, 0, root}};
+    std::vector<Big> big;  // the biggest files, a min-heap on size
+    auto bigger = [](const Big& x, const Big& y) { return x.size > y.size; };
+    uint64_t privateDirs = 0, unreadable = 0, links = 0, cloudFiles = 0, cloudBytes = 0;
+    bool cut = false;
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<uint32_t> todo{0};
+    unsigned busy = 0;  // threads listing a folder; none, with nothing left, is the end
+    auto work = [&] {
+        struct Entry {
+            std::wstring name;
+            DWORD attr;
+            uint64_t size;
+        };
+        std::vector<Entry> got;
+        WIN32_FIND_DATAW fd;
+        for (;;) {
+            uint32_t di;
+            std::wstring path;
+            {
+                std::unique_lock lk(m);
+                cv.wait(lk, [&] { return !todo.empty() || busy == 0; });
+                if (todo.empty()) break;
+                if (GetTickCount64() > deadline) {  // what was walked is answered; the rest isn't
+                    cut = true;
+                    todo.clear();
+                    cv.notify_all();
+                    if (busy == 0) break;
+                    continue;
+                }
+                di = todo.back();
+                todo.pop_back();
+                path = dirs[di].path;
+                ++busy;
+            }
+            got.clear();
+            const std::wstring pattern = LongPath(path) + (path.back() == L'\\' ? L"*" : L"\\*");
+            HANDLE f = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            const bool failed = f == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND;
+            if (f != INVALID_HANDLE_VALUE) {
+                do {
+                    if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2]))) continue;
+                    got.push_back({fd.cFileName, fd.dwFileAttributes, (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow});
+                } while (FindNextFileW(f, &fd));
+                FindClose(f);
+            }
+            {
+                std::lock_guard lk(m);
+                if (failed) ++unreadable;
+                for (const Entry& e : got) {
+                    if (e.attr & FILE_ATTRIBUTE_DIRECTORY) {
+                        if (e.attr & FILE_ATTRIBUTE_REPARSE_POINT) {
+                            ++links;
+                            continue;
+                        }
+                        std::wstring p = Join(path, e.name);
+                        if (Private(Key(p))) {
+                            ++privateDirs;
+                            continue;
+                        }
+                        todo.push_back(static_cast<uint32_t>(dirs.size()));
+                        dirs.push_back({di, dirs[di].depth + 1, std::move(p)});
+                        continue;
+                    }
+                    if (e.attr & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_OFFLINE)) {
+                        ++cloudFiles;  // a placeholder: its size is the file's in the cloud, not room taken here
+                        cloudBytes += e.size;
+                        continue;
+                    }
+                    dirs[di].bytes += e.size;
+                    ++dirs[di].files;
+                    if (filesMax && (big.size() < filesMax || e.size > big.front().size)) {
+                        std::wstring p = Join(path, e.name);
+                        if (Private(Key(p))) continue;  // counted, not named
+                        if (big.size() == filesMax) {
+                            std::pop_heap(big.begin(), big.end(), bigger);
+                            big.pop_back();
+                        }
+                        big.push_back({e.size, std::move(p)});
+                        std::push_heap(big.begin(), big.end(), bigger);
+                    }
+                }
+                --busy;
+            }
+            cv.notify_all();
+        }
+    };
+    {
+        std::vector<std::thread> threads;
+        for (unsigned i = 0, n = std::max(2u, std::min(8u, std::thread::hardware_concurrency())); i < n; ++i) threads.emplace_back(work);
+        for (auto& t : threads) t.join();
+    }
+    // A folder's size is its files' and its subfolders': a subfolder is always listed after its parent, so from the
+    // end every folder is whole before it is added to its parent.
+    for (size_t i = dirs.size(); i-- > 1;) {
+        dirs[dirs[i].parent].bytes += dirs[i].bytes;
+        dirs[dirs[i].parent].files += dirs[i].files;
+    }
+    const uint64_t total = dirs[0].bytes;
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    auto share = [&](uint64_t b) {
+        if (!total) return std::wstring(L"0%");
+        const double p = 100.0 * static_cast<double>(b) / static_cast<double>(total);
+        wchar_t buf[16];
+        swprintf_s(buf, p < 10 ? L"%.1f%%" : L"%.0f%%", p);
+        return std::wstring(buf);
+    };
+    auto pad = [](std::wstring s, size_t w) { return s.size() < w ? std::wstring(w - s.size(), L' ') + s : s; };
+
+    wchar_t took[32];
+    swprintf_s(took, secs < 10 ? L"%.1f s" : L"%.0f s", secs);
+    std::wstring out = L"sizes under " + root + L": " + SizeText(total) + L" in " + Thousands(dirs[0].files) + (dirs[0].files == 1 ? L" file" : L" files") + L" and " +
+                       Thousands(dirs.size() - 1) + (dirs.size() == 2 ? L" folder" : L" folders") + L" (read from the disk in " + took + L"; paths below it).\n";
+    if (root.size() == 3) {  // a drive: how much of what it has in use was accounted for
+        ULARGE_INTEGER free{}, size{};
+        if (GetDiskFreeSpaceExW(root.c_str(), nullptr, &size, &free) && size.QuadPart >= free.QuadPart) {
+            const uint64_t used = size.QuadPart - free.QuadPart;
+            out += root.substr(0, 2) + L" has " + SizeText(used) + L" in use";
+            if (used > total) out += L"; the other " + SizeText(used - total) + L" is in what couldn't be read or wasn't looked into (below), and in the file system's own files";
+            out += L".\n";
+        }
+    }
+    // A folder that is all but one of its subfolders (Users, and Users\me) says nothing that subfolder doesn't: the
+    // subfolder is listed instead, when it is within the depth.
+    std::vector<uint64_t> biggestChild(dirs.size(), 0);
+    for (size_t i = 1; i < dirs.size(); ++i)
+        if (dirs[i].depth <= depthMax) biggestChild[dirs[i].parent] = std::max(biggestChild[dirs[i].parent], dirs[i].bytes);
+    std::vector<uint32_t> order;
+    for (uint32_t i = 1; i < dirs.size(); ++i)
+        if (dirs[i].depth <= depthMax && !(dirs[i].bytes && biggestChild[i] * 100 >= dirs[i].bytes * 99)) order.push_back(i);
+    std::sort(order.begin(), order.end(), [&](uint32_t x, uint32_t y) { return dirs[x].bytes > dirs[y].bytes; });
+    if (order.size() > static_cast<size_t>(limit)) order.resize(static_cast<size_t>(limit));
+    if (!order.empty()) {
+        out += L"Biggest folders, up to " + std::to_wstring(depthMax) + (depthMax == 1 ? L" level" : L" levels") + L" down:\n";
+        for (uint32_t i : order)
+            out += L"  " + pad(SizeText(dirs[i].bytes), 9) + L"  " + pad(share(dirs[i].bytes), 5) + L"  " + Relative(dirs[i].path, root) + L"\\  (" +
+                   Thousands(dirs[i].files) + (dirs[i].files == 1 ? L" file)\n" : L" files)\n");
+    }
+    if (!big.empty()) {
+        std::sort(big.begin(), big.end(), [](const Big& x, const Big& y) { return x.size > y.size; });
+        out += L"Biggest files:\n";
+        for (const Big& b : big) out += L"  " + pad(SizeText(b.size), 9) + L"  " + Relative(b.path, root) + L"\n";
+    }
+    if (cut) out += L"(Stopped at the time budget (" + std::to_wstring(budgetMs / 1000) + L" s): the sizes are of what was read by then, so they are low. Raise time_budget_ms, or give a folder further down.)\n";
+    if (unreadable) out += L"(" + Thousands(unreadable) + (unreadable == 1 ? L" folder" : L" folders") + L" couldn't be read (no permission, as system folders): not counted.)\n";
+    if (privateDirs) out += L"(" + Thousands(privateDirs) + (privateDirs == 1 ? L" private folder" : L" private folders") + L" (keys, browser profiles, password managers…) weren't looked into: not counted.)\n";
+    if (links) out += L"(" + Thousands(links) + (links == 1 ? L" link or junction wasn't" : L" links and junctions weren't") + L" followed: what they point to is counted where it is.)\n";
+    if (cloudFiles) out += L"(" + Thousands(cloudFiles) + (cloudFiles == 1 ? L" file is" : L" files are") + L" only in the cloud: their " + SizeText(cloudBytes) + L" take no room here, and aren't counted.)\n";
+    return {out, false, total == 0, cut};
+}
+
 ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& client) {
     const auto t0 = std::chrono::steady_clock::now();
     ++g_calls;
@@ -1287,7 +1468,8 @@ ToolOut RunTool(const std::string& name, const Json& args, const std::wstring& c
         if (name == "find") out = ToolFind(args);
         else if (name == "grep") out = ToolGrep(args);
         else if (name == "recent") out = ToolRecent(args);
-        else out = {L"Unknown tool: " + Wide(name) + L". The tools are find, grep and recent.", true, false, false, L"unknown_command"};
+        else if (name == "sizes") out = ToolSizes(args);
+        else out = {L"Unknown tool: " + Wide(name) + L". The tools are find, grep, recent and sizes.", true, false, false, L"unknown_command"};
     } catch (const std::exception& e) {
         out = {L"Seek failed: " + Wide(e.what()), true};
     }

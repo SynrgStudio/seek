@@ -38,7 +38,7 @@ Any other MCP client (Cursor, Cline, Claude Desktop) needs a stdio server whose 
 A line in a project's `CLAUDE.md` or `AGENTS.md` helps the agent reach for it:
 
 ```
-To find files by name anywhere on this PC, or search text in a folder, use the seek tools (find, grep, recent) instead of shell commands.
+To find files by name anywhere on this PC, or search text in a folder, use the seek tools (find, grep, recent, sizes) instead of shell commands.
 ```
 
 **Installed before 0.3.3, or by hand?** The README has a PowerShell snippet that puts Seek's folder on the PATH. It leaves the rest of the PATH as it is.

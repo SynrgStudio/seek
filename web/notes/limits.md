@@ -18,6 +18,7 @@ updated: 2026-11-11
 **Not yet:**
 
 - reading the file table directly, for an instant first index without Jolt;
+- sizes kept in the index, so that `sizes` answers without reading the disk, and `find` can sort and filter by size and date;
 - ranking by git status;
 - a search for definitions;
 - a signed executable;

@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-14, Seek 0.6.0
+
+- `project.version` is 0.6.0.
+- A fourth tool, `sizes`: `notes/tools.md` has a section for it, `notes/overview.md` and `notes/install.md` name it.
+- `notes/limits.md`: sizes kept in the index is next.
+
 ## 2026-11-11, the Rust client's license and bundled option
 
 - `notes/programs.md`: `seek-client` is MIT OR Apache-2.0, can be used from the repository before it is published, and has a `bundled` option that carries a Seek release inside a program.
