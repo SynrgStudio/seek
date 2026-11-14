@@ -1,10 +1,10 @@
 ---
-title: The four tools, and their query language
+title: The three tools, and their query language
 status: stable
 updated: 2026-11-11
 ---
 
-All four are read-only. Each answer says why each result is there. A long answer is cut, with a note on how to see more.
+All three are read-only. Each answer says why each result is there. A long answer is cut, with a note on how to see more.
 
 ## find: files and folders by name
 
@@ -101,31 +101,3 @@ C:\Users\me\Projects\seek\src\grep.inl  ·  changed 1 h ago  ·  22 KB
 C:\Users\me\Projects\seek\src\util.inl  ·  changed 1 h ago  ·  13 KB
 C:\Users\me\Documents\notes\ideas.md  ·  changed 2 h ago  ·  4 KB
 ```
-
-## sizes: what takes up the space
-
-Below a folder, or on a whole drive (`C:\`). Since 0.6.0.
-
-- **What it answers.** The total, the biggest folders up to `depth` levels down (3 by default) with their share of the total and their file count, and the biggest files.
-- **A folder that is all one subfolder** (`Users`, when it is all `Users\me`) isn't listed, and isn't counted as a level of `depth`: the subfolder is listed instead, so `depth` reaches as far below `Users\me` as below `Windows`.
-- **How.** The index keeps names, not sizes, so `sizes` reads the disk, on several threads, the same walk Seek uses to index a drive without Jolt. On an SSD a whole drive takes seconds; on a hard disk, read cold, minutes. `time_budget_ms` caps it (60 s by default), and the answer says when it stopped.
-- **What it leaves out, and says so:**
-  - folders it can't read (system folders);
-  - private places (`privacy.md`), not looked into at all;
-  - links and junctions, not followed: what they point to is counted where it is;
-  - files only in the cloud (OneDrive and the like), which take no room on the disk.
-- **On a drive** it compares its total with the space the drive has in use, so the gap is visible.
-
-```
-sizes {"path": "C:\\", "depth": 2, "files": 3}
-sizes under C:\: 427 GB in 1,937,823 files and 292,263 folders (read from the disk in 3.4 s; paths below it).
-C: has 435 GB in use; the other 7.7 GB is in what couldn't be read or wasn't looked into (below), and in the file system's own files.
-Biggest folders, up to 2 levels down:
-     339 GB    79%  Users\me\  (1,667,299 files)
-      34 GB   8.0%  Windows\  (167,818 files)
-      17 GB   4.0%  Windows\WinSxS\  (118,023 files)
-Biggest files:
-      18 GB  pagefile.sys
-```
-
-The numbers in this example are one run's output, not a benchmark: they aren't facts.

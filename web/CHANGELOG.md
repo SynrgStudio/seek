@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-14, Seek 0.7.0
+
+- `project.version` is 0.7.0.
+- `sizes` is gone from Seek: its section in `notes/tools.md` is removed, and `notes/overview.md`, `notes/install.md` and `notes/tools.md` say three tools again. `notes/limits.md` no longer lists sizes kept in the index as next.
+
 ## 2026-11-14, Seek 0.6.1
 
 - `project.version` is 0.6.1.

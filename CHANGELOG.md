@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+- **The `sizes` tool is gone.** It came in 0.6.0, and the maintainer decided Seek shouldn't have it: Seek finds files and text, and what takes up a drive's space is another tool's job. Agents that called it get "unknown tool"; the other three tools are as they were.
+
 ## 0.6.1
 
 - **`sizes`: a folder that is all one subfolder isn't a level of `depth` either.** It wasn't listed already (`Users`, when it is all `Users\me`), but it still used up a level: with `depth: 3`, a 63 GB project folder three levels below `Users\me` was left out, while the same depth reached three levels below `Windows`. Now `depth` counts only the folders that are listed, and the heading says so.
