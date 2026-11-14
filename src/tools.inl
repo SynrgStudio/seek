@@ -1430,18 +1430,21 @@ ToolOut ToolSizes(const Json& a) {
             out += L".\n";
         }
     }
-    // A folder that is all but one of its subfolders (Users, and Users\me) says nothing that subfolder doesn't: the
-    // subfolder is listed instead, when it is within the depth.
+    // A folder that is all but one of its subfolders (Users, and Users\me) says nothing that subfolder doesn't: it isn't
+    // listed, and it isn't a level either, so depth 3 reaches as far below Users\me as below Windows.
     std::vector<uint64_t> biggestChild(dirs.size(), 0);
-    for (size_t i = 1; i < dirs.size(); ++i)
-        if (dirs[i].depth <= depthMax) biggestChild[dirs[i].parent] = std::max(biggestChild[dirs[i].parent], dirs[i].bytes);
+    for (size_t i = 1; i < dirs.size(); ++i) biggestChild[dirs[i].parent] = std::max(biggestChild[dirs[i].parent], dirs[i].bytes);
+    auto passThrough = [&](size_t i) { return dirs[i].bytes && biggestChild[i] * 100 >= dirs[i].bytes * 99; };
+    std::vector<int> level(dirs.size(), 0);  // parents come before their subfolders
+    for (size_t i = 1; i < dirs.size(); ++i) level[i] = level[dirs[i].parent] + (dirs[i].parent != 0 && passThrough(dirs[i].parent) ? 0 : 1);
     std::vector<uint32_t> order;
     for (uint32_t i = 1; i < dirs.size(); ++i)
-        if (dirs[i].depth <= depthMax && !(dirs[i].bytes && biggestChild[i] * 100 >= dirs[i].bytes * 99)) order.push_back(i);
+        if (level[i] <= depthMax && !passThrough(i)) order.push_back(i);
     std::sort(order.begin(), order.end(), [&](uint32_t x, uint32_t y) { return dirs[x].bytes > dirs[y].bytes; });
     if (order.size() > static_cast<size_t>(limit)) order.resize(static_cast<size_t>(limit));
     if (!order.empty()) {
-        out += L"Biggest folders, up to " + std::to_wstring(depthMax) + (depthMax == 1 ? L" level" : L" levels") + L" down:\n";
+        out += L"Biggest folders, up to " + std::to_wstring(depthMax) + (depthMax == 1 ? L" level" : L" levels") +
+               L" down (a folder that is all one subfolder isn't listed, nor counted as a level):\n";
         for (uint32_t i : order)
             out += L"  " + pad(SizeText(dirs[i].bytes), 9) + L"  " + pad(share(dirs[i].bytes), 5) + L"  " + Relative(dirs[i].path, root) + L"\\  (" +
                    Thousands(dirs[i].files) + (dirs[i].files == 1 ? L" file)\n" : L" files)\n");

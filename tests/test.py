@@ -193,15 +193,19 @@ put("sz/$Recycle.Bin/hidden.bin", b"x" * 99000)
 code, out = cli("sizes", {"path": S + "\\sz", "depth": 2})
 lines = out.splitlines()
 check("sizes: the total, the biggest folders with their share, and the biggest files",
-      "42 KB in 4 files and 3 folders" in lines[0] and lines.index("Biggest folders, up to 2 levels down:") < [i for i, l in enumerate(lines) if l.strip().endswith("big\\  (2 files)")][0]
+      "42 KB in 4 files and 3 folders" in lines[0] and [i for i, l in enumerate(lines) if l.startswith("Biggest folders, up to 2 levels down")][0] < [i for i, l in enumerate(lines) if l.strip().endswith("big\\  (2 files)")][0]
       and any(l.split()[-3:] == ["big\\deep\\", "(1", "file)"] for l in lines) and "Biggest files:" in out and out.index("deep\\a.bin") < out.index("big\\b.bin"), out)
 check("sizes: a folder's share of the total", any("39 KB" in l and "94%" in l and l.strip().endswith("big\\  (2 files)") for l in lines), out)
 check("sizes: private places aren't looked into, and it says so", "hidden.bin" not in out and "1 private folder" in out, out)
 put("sz/only/inner/x.bin", b"x" * 50000)
-code, out = cli("sizes", {"path": S + "\\sz", "depth": 2})
+put("sz/only/inner/sub/y.bin", b"x" * 20000)
+code, out = cli("sizes", {"path": S + "\\sz", "depth": 1})
 folder_lines = [l for l in out.splitlines() if l.endswith(" file)") or l.endswith(" files)")]
-check("sizes: a folder that is all one subfolder is listed as that subfolder", any(l.strip().endswith("only\\inner\\  (1 file)") for l in folder_lines)
-      and not any(l.strip().endswith("only\\  (1 file)") for l in folder_lines), out)
+check("sizes: a folder that is all one subfolder is listed as that subfolder, and isn't a level",
+      any(l.strip().endswith("only\\inner\\  (2 files)") for l in folder_lines) and not any(l.strip().endswith("only\\  (2 files)") for l in folder_lines)
+      and not any("inner\\sub\\" in l for l in folder_lines), out)
+code, out = cli("sizes", {"path": S + "\\sz", "depth": 2})
+check("sizes: and one level more reaches below it", any(l.strip().endswith("only\\inner\\sub\\  (1 file)") for l in out.splitlines()), out)
 shutil.rmtree(os.path.join(S, "sz", "only"))
 code, out = cli("sizes", {"path": S + "\\sz", "depth": 1})
 folder_lines = [l for l in out.splitlines() if l.endswith(" file)") or l.endswith(" files)")]

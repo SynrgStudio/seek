@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- **`sizes`: a folder that is all one subfolder isn't a level of `depth` either.** It wasn't listed already (`Users`, when it is all `Users\me`), but it still used up a level: with `depth: 3`, a 63 GB project folder three levels below `Users\me` was left out, while the same depth reached three levels below `Windows`. Now `depth` counts only the folders that are listed, and the heading says so.
+
 ## 0.6.0
 
 - **A fourth tool, `sizes`: what takes up the space below a folder or on a whole drive.**

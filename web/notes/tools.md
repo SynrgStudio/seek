@@ -107,7 +107,7 @@ C:\Users\me\Documents\notes\ideas.md  ·  changed 2 h ago  ·  4 KB
 Below a folder, or on a whole drive (`C:\`). Since 0.6.0.
 
 - **What it answers.** The total, the biggest folders up to `depth` levels down (3 by default) with their share of the total and their file count, and the biggest files.
-- **A folder that is all one subfolder** (`Users`, when it is all `Users\me`) isn't listed: the subfolder is.
+- **A folder that is all one subfolder** (`Users`, when it is all `Users\me`) isn't listed, and isn't counted as a level of `depth`: the subfolder is listed instead, so `depth` reaches as far below `Users\me` as below `Windows`.
 - **How.** The index keeps names, not sizes, so `sizes` reads the disk, on several threads, the same walk Seek uses to index a drive without Jolt. On an SSD a whole drive takes seconds; on a hard disk, read cold, minutes. `time_budget_ms` caps it (60 s by default), and the answer says when it stopped.
 - **What it leaves out, and says so:**
   - folders it can't read (system folders);

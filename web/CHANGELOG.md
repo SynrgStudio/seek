@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-14, Seek 0.6.1
+
+- `project.version` is 0.6.1.
+- `notes/tools.md`, sizes: a folder that is all one subfolder isn't counted as a level of `depth`.
+
 ## 2026-11-14, Seek 0.6.0
 
 - `project.version` is 0.6.0.
