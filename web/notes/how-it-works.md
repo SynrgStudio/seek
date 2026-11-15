@@ -33,3 +33,4 @@ Any program (find.rows, grep.rows…) ──────────────
   - Seek's installer stops the running daemon before it installs, whatever folder that one runs from.
 - **If the daemon can't be reached,** the call runs inside the session's own `seek.exe`.
 - **Saving.** What it saw change is saved every 5 minutes [activity_save_min]. After a restart, it reads the drives' change journals to catch what changed while no daemon watched.
+- **Lost changes.** When too many changes come at once, Windows drops a batch of what a drive watcher sees. That batch is read again from the drive's change journal, on a thread of its own: what was made or renamed in it is known again, and the folders where something was deleted or renamed away are checked against what they hold now. `seek --status` counts the lost batches on each drive.

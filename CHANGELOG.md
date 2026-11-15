@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+- **What a drive watcher loses is read from the drive's journal.** When too many changes come at once (a script making folders, a build, a big copy), Windows drops the watcher's batch, and before this the names in it never reached `find` until the next index: an agent found folders made before and after a burst, and none of the ones made during it. Now each lost batch is read again from the NTFS journal on a thread of its own, from where the watcher last was:
+  - names made or renamed in it are known again;
+  - deleted and renamed-away names go. The journal doesn't give names to programs that aren't an admin, so the folders they were in are checked against what is in them now;
+  - `seek --status` says how many batches were lost on each drive and how many names were found again in them.
+  - Tested with every batch dropped on purpose: 500 folders made, one renamed, all 500 known and the old name gone.
+- **`find` below a folder: matches only inside a folder `.gitignore` leaves out are shown, saying so, also when that folder is walked.** A folder newer than the index is walked, and the walk didn't go into ignored folders, so their matches weren't counted and the answer was a plain "Nothing named like", with no hint that `ignored: true` would find them. Now it looks there when nothing else matched, as it already did for indexed folders.
+
 ## 0.7.0
 
 - **The `sizes` tool is gone.** It came in 0.6.0, and the maintainer decided Seek shouldn't have it: Seek finds files and text, and what takes up a drive's space is another tool's job. Agents that called it get "unknown tool"; the other three tools are as they were.

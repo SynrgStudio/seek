@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-15, Seek 0.7.1
+
+- `project.version` is 0.7.1.
+- `notes/how-it-works.md`: a new point, **Lost changes**: a batch a drive watcher loses is read again from the drive's change journal.
+
 ## 2026-11-14, Seek 0.7.0
 
 - `project.version` is 0.7.0.

@@ -128,6 +128,81 @@ void CacheLost(wchar_t letter);
 
 std::atomic<uint32_t> g_watchAlive{0};  // a bit per drive with a watcher thread
 std::atomic<uint32_t> g_lostBatches[26];  // per drive: how often more changed at once than the buffer holds
+std::atomic<uint64_t> g_recovered[26];    // per drive: names those lost batches held, found again in the journal
+
+struct JournalMark {
+    DWORDLONG id = 0;
+    USN next = 0;
+};
+bool JournalNow(wchar_t letter, JournalMark& out);
+uint64_t CatchUp(wchar_t letter, int64_t since, const JournalMark* from = nullptr);
+
+// What Seek knows directly in a folder, from the index or made since, that the folder no longer has: gone from find, as
+// at `when`. For the deletions and renames a watcher lost.
+void RecheckFolder(const std::wstring& dir, int64_t when) {
+    std::unordered_set<std::wstring> now;  // the names in it now, lowercase
+    const std::wstring pattern = Join(dir.size() >= MAX_PATH - 12 ? LR"(\\?\)" + dir : dir, L"*");
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    if (h == INVALID_HANDLE_VALUE) return;  // gone itself, or not to be read: nothing to compare with
+    do now.insert(Lower(fd.cFileName));
+    while (FindNextFileW(h, &fd));
+    FindClose(h);
+    std::vector<std::wstring> known;
+    const std::wstring dk = Key(dir);
+    const size_t cut = dk.back() == L'\\' ? dk.size() : dk.size() + 1;  // where a child's name starts in its key
+    {
+        std::shared_lock lk(g_actM);
+        for (const auto& [k, a] : g_added)
+            if (k.size() > cut && k.compare(0, dk.size(), dk) == 0 && k[cut - 1] == L'\\' && k.find(L'\\', cut) == std::wstring::npos) known.push_back(a.path);
+    }
+    for (const auto& v : Volumes()) {
+        uint32_t n;
+        if (!FindNode(*v, dir, n)) continue;
+        for (uint32_t k = v->kidStart[n]; k < v->kidStart[n + 1]; ++k) known.push_back(NodePath(*v, v->kids[k]));
+    }
+    for (const std::wstring& p : known)
+        if (!now.count(Lower(p.substr(p.rfind(L'\\') + 1)))) ActRecord(p, kDeleted, when);
+}
+
+// What a lost batch held: what was made, renamed or deleted since the mark, read from the drive's journal on a thread
+// of its own, so that the watcher goes on reading meanwhile. One thread per drive, from the oldest mark not read yet
+// to the journal's end: losses read out of order would undo each other (a folder made, then renamed, would come back
+// under its old name).
+struct Recovery {
+    std::mutex m;
+    bool running = false, pending = false;
+    JournalMark from;
+};
+std::array<Recovery, 26> g_recovery;
+
+void Recover(wchar_t letter, JournalMark from) {
+    const size_t i = static_cast<size_t>(towupper(letter) - L'A');
+    Recovery& r = g_recovery[i];
+    {
+        std::lock_guard lk(r.m);
+        if (!r.pending) r.from = from;  // a later loss's changes are after an earlier one's mark: the earliest covers both
+        r.pending = true;
+        if (r.running) return;  // the thread there reads it when it is done with what it is reading
+        r.running = true;
+    }
+    std::thread([letter, i] {
+        Recovery& r = g_recovery[i];
+        for (;;) {
+            JournalMark mark;
+            {
+                std::lock_guard lk(r.m);
+                if (!r.pending) {
+                    r.running = false;
+                    return;
+                }
+                mark = r.from;
+                r.pending = false;
+            }
+            g_recovered[i] += CatchUp(letter, 0, &mark);
+        }
+    }).detach();
+}
 
 void ActWatch(wchar_t letter) {
     const uint32_t bit = 1u << (towupper(letter) - L'A');
@@ -141,14 +216,31 @@ void ActWatch(wchar_t letter) {
     }
     std::vector<DWORD> buf(64 * 1024);  // 256 KB, DWORD-aligned as the API wants
     DWORD got = 0;
+    // Where the drive's journal was when the last batch was taken whole (at most a second old): a lost batch's changes
+    // are after it, and the journal has them.
+    JournalMark seen;
+    const bool journal = JournalNow(letter, seen);
+    uint64_t seenAt = GetTickCount64();
+    // For the tests: every batch as if lost, so that what the journal gives back is all there is.
+    static const bool loseAll = Expand(L"%SEEK_TEST_LOSE_BATCHES%") == L"1";
     while (ReadDirectoryChangesW(d, buf.data(), static_cast<DWORD>(buf.size() * sizeof(DWORD)), TRUE,
                                  FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
                                      FILE_NOTIFY_CHANGE_SIZE,
                                  &got, nullptr, nullptr)) {
-        if (!got) {  // too much at once: that batch is lost
+        if (loseAll) got = 0;
+        if (!got) {  // too much at once: that batch is lost, but what it made is in the journal
             ++g_lostBatches[towupper(letter) - L'A'];
             CacheLost(letter);
+            if (journal) {
+                Recover(letter, seen);
+                JournalNow(letter, seen);  // the next loss starts from here: this one's reading goes past it
+                seenAt = GetTickCount64();
+            }
             continue;
+        }
+        if (journal && GetTickCount64() - seenAt >= 1000) {
+            JournalNow(letter, seen);  // before this batch is handled: its changes are after the mark
+            seenAt = GetTickCount64();
         }
         for (BYTE* p = reinterpret_cast<BYTE*>(buf.data());;) {
             const auto* f = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(p);
@@ -198,10 +290,6 @@ std::atomic<bool> g_catchingUp{false};
 
 // Where a drive's journal was: what came before was seen by the watchers. Saved with what they saw, so that the next
 // start reads only what came after (the time no background process watched), not all of the journal.
-struct JournalMark {
-    DWORDLONG id = 0;
-    USN next = 0;
-};
 std::array<JournalMark, 26> g_journalMark;  // from activity.txt
 
 HANDLE OpenDriveRoot(wchar_t letter) {
@@ -222,27 +310,33 @@ bool JournalNow(wchar_t letter, JournalMark& out) {
 
 // Reads the drive's journal for what was made or renamed since `since` and is still there, and records it as made
 // since the index: from the mark the last run saved when it is still in the journal, else from the journal's start.
-// Within a time budget.
-void CatchUp(wchar_t letter, int64_t since) {
+// Within a time budget. With `from`, from there instead, for the changes a watcher lost (and the start's figures are
+// left as they are). Returns how many names it made known.
+uint64_t CatchUp(wchar_t letter, int64_t since, const JournalMark* from) {
     HANDLE vol = OpenDriveRoot(letter);
-    if (vol == INVALID_HANDLE_VALUE) return;
+    if (vol == INVALID_HANDLE_VALUE) return 0;
     USN_JOURNAL_DATA_V0 jd{};
     DWORD got = 0;
     if (!DeviceIoControl(vol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0, &jd, sizeof(jd), &got, nullptr)) {  // not NTFS, or no journal
         CloseHandle(vol);
-        return;
+        return 0;
     }
-    const JournalMark mark = g_journalMark[letter - L'A'];
+    const JournalMark mark = from ? *from : g_journalMark[letter - L'A'];
     const bool fromMark = mark.id == jd.UsnJournalID && mark.next >= jd.FirstUsn && mark.next <= jd.NextUsn;
-    g_journalWhole[letter - L'A'] = !fromMark;
+    if (!from) g_journalWhole[letter - L'A'] = !fromMark;
     struct State {
         bool there = false, renamed = false;
         int64_t time = 0;
     };
     std::unordered_map<DWORDLONG, State> files;  // by file id: its last state in the journal
+    struct Gone {
+        DWORDLONG parent;
+        int64_t time;
+    };
+    std::vector<Gone> gone;  // deleted, or renamed away: the folder it was in
     READ_USN_JOURNAL_DATA_V1 rd{};
     rd.StartUsn = fromMark ? mark.next : jd.FirstUsn;
-    rd.ReasonMask = USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE | USN_REASON_RENAME_NEW_NAME;
+    rd.ReasonMask = USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE | USN_REASON_RENAME_NEW_NAME | USN_REASON_RENAME_OLD_NAME;
     rd.UsnJournalID = jd.UsnJournalID;
     rd.MinMajorVersion = rd.MaxMajorVersion = 2;
     std::vector<DWORDLONG> buf(8192);  // 64 KB, aligned for the records
@@ -259,6 +353,11 @@ void CatchUp(wchar_t letter, int64_t since) {
             if (r->RecordLength == 0) break;
             if (!oldest) oldest = r->TimeStamp.QuadPart;
             if (r->MajorVersion == 2 && r->TimeStamp.QuadPart > since) {
+                if (r->Reason & (USN_REASON_FILE_DELETE | USN_REASON_RENAME_OLD_NAME)) gone.push_back({r->ParentFileReferenceNumber, r->TimeStamp.QuadPart});
+                if (r->Reason & USN_REASON_RENAME_OLD_NAME) {
+                    off += r->RecordLength;  // the new name has a record of its own
+                    continue;
+                }
                 State& s = files[r->FileReferenceNumber];
                 if (r->Reason & USN_REASON_FILE_DELETE) {
                     s.there = false;
@@ -274,30 +373,45 @@ void CatchUp(wchar_t letter, int64_t since) {
         if (next == rd.StartUsn) break;
         rd.StartUsn = next;
     }
-    g_journalFrom[letter - L'A'] = oldest;
-    uint64_t found = 0;
-    std::vector<std::wstring> renamedDirs;
-    for (const auto& [id, s] : files) {
-        if (!s.there || GetTickCount64() > deadline) continue;
+    if (!from) g_journalFrom[letter - L'A'] = oldest;
+    // A file's path now, from its id; empty when it is gone, or its id was taken again.
+    auto pathOf = [&](DWORDLONG id) {
         FILE_ID_DESCRIPTOR fid{sizeof(FILE_ID_DESCRIPTOR)};
         fid.Type = FileIdType;
         fid.FileId.QuadPart = static_cast<LONGLONG>(id);
         HANDLE h = OpenFileById(vol, &fid, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, FILE_FLAG_BACKUP_SEMANTICS);
-        if (h == INVALID_HANDLE_VALUE) continue;  // gone since, or its id was taken again
+        if (h == INVALID_HANDLE_VALUE) return std::wstring();
         wchar_t p[2048];
         const DWORD n = GetFinalPathNameByHandleW(h, p, 2048, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
         CloseHandle(h);
-        if (!n || n >= 2048) continue;
+        if (!n || n >= 2048) return std::wstring();
         std::wstring path(p, n);
         if (path.rfind(L"\\\\?\\", 0) == 0) path.erase(0, 4);
-        if (path.size() < 3 || path[1] != L':') continue;
+        return path.size() >= 3 && path[1] == L':' ? path : std::wstring();
+    };
+    uint64_t found = 0;
+    std::vector<std::wstring> renamedDirs;
+    for (const auto& [id, s] : files) {
+        if (!s.there || GetTickCount64() > deadline) continue;
+        const std::wstring path = pathOf(id);
+        if (path.empty()) continue;
         found += ActRecord(path, kCreated, s.time);
         const DWORD at = s.renamed ? GetFileAttributesW(path.c_str()) : INVALID_FILE_ATTRIBUTES;
         if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY)) renamedDirs.push_back(path);  // what is inside came along without records of its own
     }
+    // Deleted, or renamed away: the journal keeps the name from programs that aren't an admin, but the folder it was in
+    // outlives it. Each such folder is checked once against what is in it now.
+    std::unordered_map<DWORDLONG, int64_t> folders;
+    for (const Gone& g : gone) folders[g.parent] = std::max(folders[g.parent], g.time);
+    for (const auto& [id, t] : folders) {
+        if (GetTickCount64() > deadline) break;
+        const std::wstring dir = pathOf(id);
+        if (!dir.empty()) RecheckFolder(dir, t);
+    }
     CloseHandle(vol);
     for (const std::wstring& d : renamedDirs) AddedWalk(d);
-    g_caughtUp[letter - L'A'] = found;
+    if (!from) g_caughtUp[letter - L'A'] = found;
+    return found;
 }
 
 // ---- kept between runs

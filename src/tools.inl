@@ -324,6 +324,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             if (towupper(scope[0]) == vols[vi]->letter && FindNode(*vols[vi], scope, n)) ignoreMap = MakeIgnoreMap(*vols[vi], vi, n, scope);
         }
     std::atomic<uint64_t> hidden{0};
+    bool leftOut = false;  // a walk passed by a folder .gitignore leaves out, without looking inside
     auto hides = [&](const Cand& c, bool count) {
         if (!follow || !indexed) return false;
         bool h;
@@ -370,6 +371,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
             const uint8_t depth = static_cast<uint8_t>(std::min<size_t>(250, std::count(p.begin(), p.end(), L'\\')));
             const bool left = follow && oneByOne.Check(p, dir);  // what .gitignore leaves out
             if (left) {
+                leftOut = leftOut || dir;
                 if (count && match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf)) hidden.fetch_add(1, std::memory_order_relaxed);
             } else if (match(fd.cFileName, wcslen(fd.cFileName), dir, depth, c, buf) && inParts(k)) {
                 ++s.total;
@@ -419,13 +421,14 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     }
     const bool scatteredOnly = good == 0 && !nearOnly && !found.empty();
     const std::wstring where = scope.empty() ? L"on all drives" : L"under " + scope;
-    if (found.empty() && hidden && !rows) {  // only where .gitignore leaves things out: shown from there, saying so
+    if (found.empty() && (hidden || leftOut) && !rows) {  // only where .gitignore leaves things out: shown from there, saying so
         Json all = a;
         Json yes;
         yes.kind = Json::Bool;
         yes.b = true;
         all.o.insert(all.o.begin(), {"ignored", yes});
         ToolOut o = ToolFind(all);
+        if (o.nothing) return o;  // nothing there either: said as plainly as anywhere
         o.text = L"Nothing outside what .gitignore leaves out (and dependency and cache folders); in there:\n" + o.text;
         return o;
     }
@@ -1069,7 +1072,8 @@ std::wstring StatusText() {
     std::wstring watching, missing, lost;
     for (const wchar_t c : drives) {
         ((g_watchAlive & (1u << (c - L'A'))) ? watching : missing) += std::wstring(1, c) + L": ";
-        if (const uint32_t n = g_lostBatches[c - L'A']) lost += std::wstring(1, c) + L": " + std::to_wstring(n) + L"  ";
+        if (const uint32_t n = g_lostBatches[c - L'A'])
+            lost += std::wstring(1, c) + L": " + std::to_wstring(n) + L", " + Thousands(g_recovered[c - L'A']) + L" names made in them found again in the journal  ";
     }
     out += L"Drive watchers: " + (watching.empty() ? L"none" : L"on " + watching) + (missing.empty() ? L"" : L"; not on " + missing + L"(tried again every 5 min)") +
            (lost.empty() ? L"" : L"; batches of changes lost (too many at once): " + lost) + L"\n";

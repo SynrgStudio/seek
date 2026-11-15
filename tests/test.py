@@ -605,6 +605,9 @@ code, out = cli("find", {"query": "ext:md !gen/", "path": REPO})
 check("find: !folder/ leaves out what is in that folder", "plan.md" in out and "old.md" not in out, out)
 code, out = cli("find", {"query": "build.log", "path": REPO})
 check("find: what is only where .gitignore leaves things out is shown, saying so", "Nothing outside what .gitignore leaves out" in out and "build.log" in out, out)
+put("slate/repo/target/qzv-notes/a.md", "")
+code, out = cli("find", {"query": "qzv-notes", "path": REPO})
+check("find: also when it is inside a folder .gitignore leaves out", "Nothing outside what .gitignore leaves out" in out and "qzv-notes" in out, out)
 r = pipe_call("0.0.0 slate", "__rows", {"query": "ext:md !gen/", "path": REPO})
 check("rows: !folder/ too", "plan.md" in r.get("text", "") and "old.md" not in r.get("text", ""), r.get("text", "")[:400])
 r = pipe_call("0.0.0 slate", "__grep_rows", {"pattern": "qzk", "path": REPO})
@@ -712,6 +715,43 @@ out = stats()
 check("stats: read from its file without a background process", re.search(today + r"\s+find\s+1\s", out) is not None, out)
 r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60)
 check("status: without the background process, it says so", r.returncode == 1 and "isn't running" in r.stdout.decode("utf-8", "replace"), r.stdout.decode("utf-8", "replace"))
+# ---- a watcher that loses every batch of changes (too many at once): what was made, renamed and deleted comes from the
+# drive's journal instead. An instance of its own, as the setting is read once.
+if not CI:
+    home0 = os.environ["SEEK_HOME"]
+    os.environ["SEEK_HOME"] = os.path.join(TMP, "seek-test-home-lost")
+    os.environ["SEEK_TEST_LOSE_BATCHES"] = "1"
+    shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
+    subprocess.run(["powershell", "-NoProfile", "-Command", "Start-Process -FilePath '%s' -ArgumentList '--daemon' -WindowStyle Hidden" % EXE], timeout=60)
+    for _ in range(300):
+        try:
+            if "ready" in pipe_call("0.0.0 test", "__status_rows", {}).get("text", ""):
+                break
+        except OSError:
+            pass
+        time.sleep(0.3)
+    lost = os.path.join(ROOT, "lost")
+    os.makedirs(lost)
+    for i in range(40):
+        os.makedirs(os.path.join(lost, "qzlost_%02d" % i))
+        open(os.path.join(lost, "qzlost_%02d" % i, "f.txt"), "w").write("x")
+    time.sleep(1)  # the first ones known, as they were made
+    os.rename(os.path.join(lost, "qzlost_00"), os.path.join(lost, "qzlost_renamed"))
+    shutil.rmtree(os.path.join(lost, "qzlost_01"))
+    want = sorted(os.listdir(lost))
+    for _ in range(40):
+        t = pipe_call("0.0.0 test", "__rows", {"query": "qzlost", "path": lost, "type": "folder"}).get("text", "")
+        got = sorted(os.path.basename(l.split("\t")[1]) for l in t.split("\n")[1:] if l)
+        if got == want:
+            break
+        time.sleep(0.5)
+    r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace")
+    check("watchers: with every batch lost, the journal gives what was made, renamed and deleted", got == want and "batches of changes lost" in r,
+          "known but not there: %s; there but not known: %s\n%s" % (sorted(set(got) - set(want)), sorted(set(want) - set(got)), r))
+    subprocess.run([EXE, "--stop"], timeout=60)
+    shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
+    os.environ["SEEK_HOME"] = home0
+    del os.environ["SEEK_TEST_LOSE_BATCHES"]
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 shutil.rmtree(JOLT, ignore_errors=True)
