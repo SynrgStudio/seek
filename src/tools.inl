@@ -551,7 +551,9 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     int shown = 0, skipped = 0;  // skipped: the ones before offset
     uint64_t gone = 0;
     size_t next = 0;  // where this page ended in found
-    for (; next < found.size() && shown < limit; ++next) {
+    // Letters scattered along a name: chance, most likely. A few of them, without a count that reads as many matches.
+    const int pageMax = scatteredOnly && !offset ? std::min(limit, 5) : limit;
+    for (; next < found.size() && shown < pageMax; ++next) {
         const Found& f = found[next];
         WIN32_FILE_ATTRIBUTE_DATA d{};
         if (!exists(f, d)) {
@@ -591,6 +593,12 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         if (after) return {head + count + L"; paging goes through the best " + Thousands(kRanked) + L" by name, and offset " + std::to_wstring(offset) +
                            L" is past them. Narrow the query, add path, or use summary for counts.\n" + building};
         return {head + count + L", so offset " + std::to_wstring(offset) + L" is past the last one.\n" + building};
+    }
+    if (scatteredOnly && !skipped) {
+        std::wstring out = L"Nothing named like \"" + query + L"\" " + where + L". Some names have its letters scattered along them, most likely by chance" +
+                           (after ? L"; the first " + std::to_wstring(shown) : std::wstring()) + L":\n" + list;
+        if (after && hasNext) out += L"(More like these: offset=" + std::to_wstring(shown) + L".)\n";
+        return {out + building, false, true};
     }
     if (nearOnly) head += L"no name has those letters in order; these are close (typo-tolerant)";
     else if (scatteredOnly) head += L"no name has those letters together; these have them scattered along the name (" + count + L")";

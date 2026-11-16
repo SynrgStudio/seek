@@ -30,7 +30,7 @@ Then what Seek knows about the user moves the best 2,000 [ranked_results] up or 
 
 **When nothing matches well:**
 
-- Letters scattered along a name match by chance: a long word spread over more than one and a half times its length, or a short one with a stretch that starts in the middle of a word, far from the letter before ("wolf" in `WhiteOak_ShelF`). Initials and abbreviations still match ("wolf" in `Wide_Oval_Lamp_Frame`, "tstpy" in `test.py`). Chance matches are counted apart and shown only when nothing better is there, and the answer says so.
-- Close names, with a typo, are tried only when no name has the letters in order. The answer says how close each one is, as a percentage of the letters typed.
+- Letters scattered along a name match by chance: a long word spread over more than one and a half times its length, or a short one with a stretch that starts in the middle of a word, far from the letter before ("wolf" in `WhiteOak_ShelF`). Initials and abbreviations still match ("wolf" in `Wide_Oval_Lamp_Frame`, "tstpy" in `test.py`). Chance matches are counted apart. When there is nothing better, the answer says nothing is named like it and lists a few of them, without a count.
+- Close names, with a typo, are tried only when no name has the letters in order. The answer says how close each one is, as a percentage of the letters typed. Two neighbouring letters swapped count as half a mistake, so only the name typed exactly is 100%: "wolf" is 87% in `Wlof` and 75% in `Snowflake` (two swaps).
 
 `near` is a boost, not a filter: `path` filters.

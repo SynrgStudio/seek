@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-16, Seek 0.7.3
+
+- `project.version` is 0.7.3.
+- `notes/ranking.md`: a swap of two neighbouring letters is half a mistake (only the name typed exactly is 100%), and an answer with only scattered letters says nothing is named like it, listing a few without a count.
+
 ## 2026-11-16, Seek 0.7.2
 
 - `project.version` is 0.7.2.

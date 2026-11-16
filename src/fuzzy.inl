@@ -135,8 +135,9 @@ int NameRank(const wchar_t* name, size_t n, const std::wstring& pat) {
 
 // ---- typos: names close to what was typed, for when FuzzyMatch finds nothing in them.
 // The pattern is compared with the best stretch of the name, its letters in order. A wrong, extra or missing letter is
-// a mistake; two neighbours swapped are not, all the letters are right. The result is the percentage of letters right,
-// so the minimum also says how many mistakes a word has room for: at 75%, none in 3 letters, one in 4, two in 8.
+// a mistake; two neighbours swapped are half of one, all the letters are there. The result is the percentage of letters
+// right, so the minimum also says how many mistakes a word has room for: at 75%, none in 3 letters, one in 4, two in 8.
+// Only the name typed exactly is 100%: "owfl" in "Snowflake" is "wolf" with two swaps, 75%.
 // Counting letters without their order was tried and is useless: thousands of names have them all somewhere.
 constexpr int kNearText = 260;  // names longer than this are compared up to here
 
@@ -163,29 +164,29 @@ int NearMatch(const wchar_t* text, size_t len, const NearPattern& np) {
         t[j] = FzLower(text[j]);
         ++have[t[j] & 63];
     }
-    const int k = np.mistakes;
     int absent = 0;
     for (int i = 0; i < m; ++i) {
         uint16_t& h = have[np.p[i] & 63];
         if (h) --h;
-        else if (++absent > k) return 0;
+        else if (++absent > np.mistakes) return 0;
     }
+    const int k = 2 * np.mistakes;  // in half mistakes, from here on: a swap is one, anything else two
     // Edit distance against any stretch of the text: a row per letter of the text, and it can start anywhere. Of each
     // row only the start can stay within the mistakes allowed, so it goes as far as the last two rows did, and a little.
     int rows[3][67];
     int *before = rows[0], *prev = rows[1], *cur = rows[2];
     for (int i = 0; i <= m + 2; ++i) {
         before[i] = cur[i] = k + 1;
-        prev[i] = std::min(i, k + 1);
+        prev[i] = std::min(2 * i, k + 1);
     }
-    int reach = std::min(m, k), reachBefore = 0, best = k + 1;
+    int reach = std::min(m, k / 2), reachBefore = 0, best = k + 1;
     for (int j = 0; j < n && best > 0; ++j) {
         const int limit = std::max(reach, reachBefore) + 2;
         cur[0] = 0;
         int i = 1;
         for (; i <= m && (i <= limit || cur[i - 1] <= k); ++i) {
-            int v = std::min(prev[i - 1] + (np.p[i - 1] != t[j]), std::min(prev[i], cur[i - 1]) + 1);
-            if (i > 1 && j > 0 && np.p[i - 1] == t[j - 1] && np.p[i - 2] == t[j]) v = std::min(v, before[i - 2]);  // swapped: free
+            int v = std::min(prev[i - 1] + 2 * (np.p[i - 1] != t[j]), std::min(prev[i], cur[i - 1]) + 2);
+            if (i > 1 && j > 0 && np.p[i - 1] == t[j - 1] && np.p[i - 2] == t[j]) v = std::min(v, before[i - 2] + 1);  // swapped: half
             cur[i] = v;
         }
         cur[i] = cur[i + 1] = k + 1;  // what comes after is out of reach
@@ -197,7 +198,7 @@ int NearMatch(const wchar_t* text, size_t len, const NearPattern& np) {
         prev = cur;
         cur = spare;
     }
-    return best > k ? 0 : (m - best) * 100 / m;
+    return best > k ? 0 : (2 * m - best) * 100 / (2 * m);
 }
 
 inline int NearScore(int percent, size_t len) { return kNearFloor + percent * 1000 - static_cast<int>(std::min<size_t>(len, 255)); }

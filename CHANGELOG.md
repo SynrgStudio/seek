@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+- **Close names: two neighbouring letters swapped are half a mistake, not none.** "wolf" found `Snowflake1.png` as "close to what was typed: 100%": its "owfl" is "wolf" with two swaps, and swaps were free. Only the name typed exactly is 100% now: "wolf" is 87% in `Wlof` (one swap) and 75% in `Snowflake` (two).
+- **`find`: when only names with the letters scattered along them are there, nothing is named like it.** The answer said "these have them scattered along the name (about 5,023 matches)", and a count like that reads as many real matches. Now it says "Nothing named like …", that some names have the letters scattered along them, most likely by chance, and lists the first five (`offset` for more). The rows for programs are as they were.
+
 ## 0.7.2
 
 - **`find`: a short word's letters scattered along a name aren't a match.** Words of six letters or more already had this rule; shorter ones matched as long as their letters were in the name in order, wherever they were. So "wolf" found `WhiteOak_ShelF.png`, a two-word query found thousands of build folders with hash names, and the counts were far too high ("wolf" on every drive here: about 59,762, now 1,872). Now a short word that isn't in the name whole, with a stretch of its letters starting in the middle of a word more than two letters after the one before, matched by chance: it is counted apart and shown only when nothing better is there, under "no name has those letters together". Initials and abbreviations still match: "wolf" in `Wide_Oval_Lamp_Frame`, "tstpy" in `test.py`.

@@ -152,6 +152,15 @@ for n in ("WhiteOak_Shelf.png", "Wide_Oval_Lamp_Frame.png", "Wolf_Statue.fbx"):
 code, out = cli("find", {"query": "wolf", "path": S + "\\assets"})
 check("find: a short word's letters scattered along a name aren't a match", "Wolf_Statue.fbx" in out and "WhiteOak_Shelf" not in out, out)
 check("find: initials still are", "Wide_Oval_Lamp_Frame.png" in out, out)
+put("snow/Snowflake1.png", "")
+put("snow/Owlf_Den.png", "")
+code, out = cli("find", {"query": "wolf", "path": S + "\\snow"})
+check("find: letters swapped twice are close to what was typed, not 100%", "Snowflake1.png  ·  0 B  ·  modified just now  ·  close to what was typed: 75%" in out
+      and "Owlf_Den.png  ·  0 B  ·  modified just now  ·  close to what was typed: 87%" in out, out)
+put("snow/q_x1z_y9q_w3k_p0j.txt", "")
+code, out = cli("find", {"query": "qzyw", "path": S + "\\snow"})
+check("find: with only letters scattered along names, nothing is named like it", out.startswith('Nothing named like "qzyw"') and "most likely by chance" in out
+      and "q_x1z_y9q_w3k_p0j.txt" in out and "matches" not in out, out)
 
 
 def names(out):  # the results of a find answer, without its header and its "more" line
