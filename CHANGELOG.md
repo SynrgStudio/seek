@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2
+
+- **`find`: a short word's letters scattered along a name aren't a match.** Words of six letters or more already had this rule; shorter ones matched as long as their letters were in the name in order, wherever they were. So "wolf" found `WhiteOak_ShelF.png`, a two-word query found thousands of build folders with hash names, and the counts were far too high ("wolf" on every drive here: about 59,762, now 1,872). Now a short word that isn't in the name whole, with a stretch of its letters starting in the middle of a word more than two letters after the one before, matched by chance: it is counted apart and shown only when nothing better is there, under "no name has those letters together". Initials and abbreviations still match: "wolf" in `Wide_Oval_Lamp_Frame`, "tstpy" in `test.py`.
+
 ## 0.7.1
 
 - **What a drive watcher loses is read from the drive's journal.** When too many changes come at once (a script making folders, a build, a big copy), Windows drops the watcher's batch, and before this the names in it never reached `find` until the next index: an agent found folders made before and after a burst, and none of the ones made during it. Now each lost batch is read again from the NTFS journal on a thread of its own, from where the watcher last was:

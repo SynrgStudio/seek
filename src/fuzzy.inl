@@ -76,8 +76,10 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
     }
     // 4) score
     int s = 0;
+    bool stray = false;  // a stretch of the word starts inside a word, well past the letter before
     for (size_t k = 0; k < m; ++k) {
         int at = p[k];
+        if (k > 0 && at - p[k - 1] - 1 > 2 && !FzBoundary(text, at)) stray = true;
         s += 16;
         if (k > 0 && at == p[k - 1] + 1) s += 12;        // contiguous
         if (FzBoundary(text, at)) s += 10;               // word start
@@ -90,7 +92,10 @@ bool FuzzyMatch(const wchar_t* text, size_t n, const std::wstring& pat, int& sco
     s -= static_cast<int>(std::min<size_t>(n, 64) / 8);  // shorter texts first, just barely
     // A word this long isn't an abbreviation: spread over more than one and a half times its length, it matched by
     // chance. With millions of names there are always plenty of those, and they would bury the name that was meant.
-    if (m >= 6 && span * 2 > static_cast<int>(m) * 3) s += kScattered;
+    // A shorter one matched by chance too when a stretch of it starts in the middle of a word, far from the letter
+    // before: "wolf" in "WhiteOak_ShelF", "inu" in a hash. Abbreviations keep their stretches at word starts or close
+    // together ("tstpy", "wdr").
+    if (m >= 6 ? span * 2 > static_cast<int>(m) * 3 : span != static_cast<int>(m) && stray) s += kScattered;
     score = s;
     if (pos) pos->assign(p, p + m);
     return true;

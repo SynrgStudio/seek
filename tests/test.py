@@ -147,6 +147,11 @@ code, out = cli("find", {"query": "*.cpp", "path": S, "summary": True})
 check("find: summary counts", "By area" in out and "By extension" in out, out)
 code, out = cli("find", {"query": "zzzqqqxxx", "path": S})
 check("find: nothing says so", out.startswith("Nothing named like"), out)
+for n in ("WhiteOak_Shelf.png", "Wide_Oval_Lamp_Frame.png", "Wolf_Statue.fbx"):
+    put("assets/" + n, "")
+code, out = cli("find", {"query": "wolf", "path": S + "\\assets"})
+check("find: a short word's letters scattered along a name aren't a match", "Wolf_Statue.fbx" in out and "WhiteOak_Shelf" not in out, out)
+check("find: initials still are", "Wide_Oval_Lamp_Frame.png" in out, out)
 
 
 def names(out):  # the results of a find answer, without its header and its "more" line

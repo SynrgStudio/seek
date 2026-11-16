@@ -1,4 +1,4 @@
 // Seek's version. A release is built and published by hand when this changes (README, "Building and testing").
 #pragma once
-#define SEEK_VERSION "0.7.1"
-#define SEEK_VERSION_NUM 0, 7, 1, 0
+#define SEEK_VERSION "0.7.2"
+#define SEEK_VERSION_NUM 0, 7, 2, 0

@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-16, Seek 0.7.2
+
+- `project.version` is 0.7.2.
+- `notes/ranking.md`: the point on scattered letters now covers short words too, with examples of what still matches.
+
 ## 2026-11-15, Seek 0.7.1
 
 - `project.version` is 0.7.1.
