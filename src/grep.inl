@@ -193,7 +193,9 @@ const std::unordered_set<std::wstring>& BinaryExts() {
         L".jpg", L".jpeg", L".gif", L".bmp", L".ico", L".webp", L".tif", L".tiff", L".mp3", L".mp4", L".mkv", L".avi", L".mov", L".wav",
         L".flac", L".ogg", L".ttf", L".otf", L".woff", L".woff2", L".class", L".jar", L".pyc", L".so", L".a", L".o", L".blend", L".blend1",
         L".psd", L".exr", L".hdr", L".dds", L".glb", L".fbx", L".db", L".sqlite", L".pak", L".msi", L".cab", L".pch", L".ipch", L".res",
-        L".idx", L".pack", L".3mf", L".stl"};
+        L".idx", L".pack", L".3mf", L".stl",
+        // game engines' imported and packed assets (Godot, Unreal)
+        L".ctex", L".stex", L".scn", L".mesh", L".sample", L".oggvorbisstr", L".pck", L".uasset", L".umap", L".wasm"};
     return s;
 }
 const std::unordered_set<std::wstring>& DocExts() {
@@ -505,6 +507,7 @@ struct GrepResult {
     std::vector<std::pair<std::wstring, uint64_t>> bigFiles;  // the first few over the size limit, with their size
     std::vector<std::wstring> unreadableFiles;                // the first few that couldn't be read
     std::unordered_map<std::wstring, int> noFilter;  // documents without a text filter, by extension
+    std::unordered_map<std::wstring, int> kinds;     // the files met that aren't binary, by extension: for a glob to suggest
     bool timedOut = false, fromMemory = false;
     std::wstring error;
 };
@@ -893,14 +896,19 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
     std::condition_variable cv;
     std::deque<WalkFile> files;  // taken first, so the queue stays short
     std::vector<DirJob> dirs;
+    // Big files, after every other file and folder: under a time budget, the many small ones (the code) are read
+    // before a few big ones (assets, data, logs) take it all, wherever they are in the tree.
+    std::deque<WalkFile> later;
+    constexpr uint64_t kLater = 256 << 10;
     dirs.push_back({root, std::move(chain)});
-    unsigned busy = 0;  // threads holding a job; none, with nothing queued, is the end
+    unsigned busy = 0;     // threads holding a job; none, with nothing queued, is the end
+    unsigned listing = 0;  // threads listing a folder
     std::atomic<bool> late{false};
     const std::wstring rootKey = Key(root);
     const size_t relAt = rootKey.size() + (rootKey.back() == L'\\' ? 0 : 1);
     const bool globs = !q.include.empty() || !q.exclude.empty();
 
-    auto listDir = [&](DirJob& d, std::vector<WalkFile>& outFiles, std::vector<DirJob>& outDirs) {
+    auto listDir = [&](DirJob& d, std::vector<WalkFile>& outFiles, std::vector<DirJob>& outDirs, std::vector<WalkFile>& outLater) {
         if (!q.ignored) AddIgnores(d.dir, d.chain);
         onDir(Key(d.dir), d.chain);
         const std::wstring pattern = LongPath(d.dir) + (d.dir.back() == L'\\' ? L"*" : L"\\*");
@@ -926,14 +934,15 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
             const uint64_t size = (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
             const bool doc = DocExts().count(ext) != 0;
             if (doc && size > kDocMax) continue;
-            outFiles.push_back({std::move(path), std::move(key), std::move(nameKey), size, doc, BinaryExts().count(ext) != 0});
+            const bool binaryExt = BinaryExts().count(ext) != 0;
+            (size > kLater && !binaryExt ? outLater : outFiles).push_back({std::move(path), std::move(key), std::move(nameKey), size, doc, binaryExt});
         } while (FindNextFileW(f, &fd));
         FindClose(f);
     };
 
     auto work = [&] {
         const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        std::vector<WalkFile> newFiles;
+        std::vector<WalkFile> newFiles, newLater;
         std::vector<DirJob> newDirs;
         for (;;) {
             WalkFile fj;
@@ -941,30 +950,39 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
             bool isFile = false;
             {
                 std::unique_lock lk(qm);
-                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || busy == 0; });
-                if (files.empty() && dirs.empty()) break;  // and no thread busy: nothing more will come
+                // a big file waits while a thread still lists a folder: that may bring small ones
+                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || (!later.empty() && !listing) || busy == 0; });
+                if (files.empty() && dirs.empty() && later.empty()) break;  // and no thread busy: nothing more will come
                 if (!files.empty()) {
                     fj = std::move(files.front());
                     files.pop_front();
                     isFile = true;
-                } else {
+                } else if (!dirs.empty()) {
                     dj = std::move(dirs.back());
                     dirs.pop_back();
+                    ++listing;
+                } else {
+                    fj = std::move(later.front());
+                    later.pop_front();
+                    isFile = true;
                 }
                 ++busy;
             }
             if (stop || GetTickCount64() > deadline) late = true;
             else if (isFile) onFile(fj);
-            else listDir(dj, newFiles, newDirs);
+            else listDir(dj, newFiles, newDirs, newLater);
             bool wake;
             {
                 std::lock_guard lk(qm);
                 for (WalkFile& x : newFiles) files.push_back(std::move(x));
+                for (WalkFile& x : newLater) later.push_back(std::move(x));
                 for (size_t i = newDirs.size(); i-- > 0;) dirs.push_back(std::move(newDirs[i]));  // the first subfolder on top
                 --busy;
-                wake = !newFiles.empty() || !newDirs.empty() || (busy == 0 && files.empty() && dirs.empty());
+                if (!isFile) --listing;
+                wake = !newFiles.empty() || !newDirs.empty() || (!isFile && !listing && !later.empty()) || busy == 0;
             }
             newFiles.clear();
+            newLater.clear();
             newDirs.clear();
             if (wake) cv.notify_all();
         }
@@ -1149,7 +1167,13 @@ GrepResult RunGrep(const GrepQuery& q) {
                           [](const std::wstring&, const IgnChain&) {},
                           [&](const WalkFile& f) {
                               if (f.binaryExt) ++binaries;
-                              else if (!f.doc || q.documents) searchFile(f);
+                              else if (!f.doc || q.documents) {
+                                  {
+                                      std::lock_guard lk(fm);
+                                      ++res.kinds[ExtOf(f.nameKey)];
+                                  }
+                                  searchFile(f);
+                              }
                           });
     }
     // the order a single walk would give: a folder's files, then its subfolders, by name

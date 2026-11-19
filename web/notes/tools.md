@@ -75,6 +75,7 @@ In a folder, or in a single file.
   - With no text match at all, it suggests file names that look like the pattern.
 - **Long lines.** Matches close together share their context lines. A line longer than 240 characters [grep_line_chars] is cut around each of its matches, up to 4 [grep_line_windows].
 - **The header** says how long the search took, and whether it came from memory, or from a hard disk the first time.
+- **The time budget** is 6 s [grep_budget_s] by default (`time_budget_ms`). Files over 256 KB [grep_later_kb] are read after every smaller one, so under the budget the code is searched before big assets, data and logs, wherever they are. When the budget ends the search with no match, the answer says that first, and names the kinds of file it met most, for a `glob`.
 
 ```
 grep {"pattern": "RecTake", "path": "C:\\Users\\me\\Projects\\jolt"}

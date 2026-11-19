@@ -214,6 +214,8 @@ fact("index_walk_threads", code("src/index.inl", r"n = std::max\(2u, std::min\((
 fact("grep_threads", code("src/grep.inl", r"nth = std::max\(2u, std::min\((\d+)u"), "threads", "at most, to list a folder and read its files", "src/grep.inl", None)
 fact("binary_probe_kb", code("src/grep.inl", r"std::min<uint64_t>\(size, (\d+)\)") // 1024, "KB", "what grep reads of a file to tell it is binary; then the rest isn't read", "src/grep.inl", None)
 fact("grep_file_max_mb", code("src/grep.inl", r"kTextMax = (\d+)ull << 20"), "MB", "files over this aren't read by grep in a folder (named in the answer); a file given as the path is read whatever its size", "src/grep.inl", None)
+fact("grep_later_kb", code("src/grep.inl", r"kLater = (\d+) << 10"), "KB", "files over this are read after every smaller file and folder, so under the time budget the code comes before big assets", "src/grep.inl", None)
+fact("grep_budget_s", code("src/tools.inl", r'ArgInt\(a, "time_budget_ms", (\d+)000,'), "s", "grep's time budget by default (time_budget_ms)", "src/tools.inl", None)
 fact("grep_line_chars", code("src/grep.inl", r"kWide = (\d+)"), "characters", "a line longer than this is shown around its matches only", "src/grep.inl", None)
 fact("grep_line_windows", code("src/grep.inl", r"kWindows = (\d+)"), "windows", "how many matches of one long line are shown, each with what is around it", "src/grep.inl", None)
 fact("grep_context_max", code("src/tools.inl", r'ArgInt\(a, "before", around, 0, (\d+)\)'), "lines", "the most context grep shows on each side of a match (before, after)", "src/tools.inl", None)

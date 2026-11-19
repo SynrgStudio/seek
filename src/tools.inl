@@ -749,6 +749,8 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
                 r.files.empty(), r.timedOut};
     }
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    const std::wstring budget = q.budgetMs % 1000 ? std::to_wstring(q.budgetMs / 1000) + L"." + std::to_wstring(q.budgetMs % 1000 / 100) + L" s"
+                                                  : std::to_wstring(q.budgetMs / 1000) + L" s";
     std::wstring head = L"grep \"" + q.pattern + L"\"" + (q.without.empty() ? L"" : L" without \"" + q.without + L"\"") + L" in " + q.root + L": " + Thousands(lines) +
                         (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
@@ -759,7 +761,23 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
                                                             : L"") +
                         L").\n";
     std::wstring tail;
-    if (r.timedOut) tail += L"Stopped at the time budget (" + std::to_wstring(q.budgetMs / 1000) + L" s): not everything was searched. Narrow path or glob, or raise time_budget_ms.\n";
+    if (r.timedOut) {
+        // the kinds of file most met: a glob to one of them is the likeliest way to fit in the budget
+        std::vector<std::pair<int, std::wstring>> kinds;
+        for (const auto& [ext, c] : r.kinds)
+            if (!ext.empty()) kinds.push_back({c, ext});
+        std::sort(kinds.begin(), kinds.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+        std::wstring most;
+        for (size_t i = 0; i < kinds.size() && i < 4; ++i) most += (i ? L", *" : L"*") + kinds[i].second + L" " + Thousands(kinds[i].first);
+        const std::wstring how = L"Narrow path, or glob to the kind of file" + (most.empty() ? std::wstring() : L" (the most met: " + most + L")") +
+                                 L", or raise time_budget_ms.\n";
+        if (r.files.empty())  // said first: "0 matching lines" alone reads as none there
+            head = L"grep \"" + q.pattern + L"\" in " + q.root + L": stopped at the time budget (" + budget + L") before finding a match, after " +
+                   Thousands(r.searched) + (r.searched == 1 ? L" file" : L" files") + L" in " + Thousands(static_cast<uint64_t>(ms)) +
+                   L" ms. Not everything was searched: there may be matches in the rest. " + how;
+        else
+            tail += L"Stopped at the time budget (" + budget + L"): not everything was searched. " + how;
+    }
     if (!r.noFilter.empty()) {
         std::wstring kinds;
         int n = 0;

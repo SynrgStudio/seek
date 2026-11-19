@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4
+
+- **`grep` reads big files last.** Under the time budget, a folder of sibling repositories full of big assets used it all up on the first few: an agent searching for a word in a script got "0 matching lines … Stopped at the time budget", and the script was in a repository the walk never reached. Now files over 256 KB wait until every smaller file and folder has been read, so the code comes first wherever it is. Searching all of a folder takes as long as before.
+- **A `grep` cut by the budget with no match says so first:** "stopped at the time budget (6 s) before finding a match, after 4,314 files … there may be matches in the rest", instead of leading with "0 matching lines". It names the kinds of file it met most (`*.gd 800, *.gltf 47`), for a `glob`. A budget under a second is written as such ("0.5 s", not "0 s").
+- `grep` skips more binary formats by name: game engines' imported and packed assets (`.ctex`, `.stex`, `.scn`, `.mesh`, `.sample`, `.oggvorbisstr`, `.pck`, `.uasset`, `.umap`) and `.wasm`.
+
 ## 0.7.3
 
 - **Close names: two neighbouring letters swapped are half a mistake, not none.** "wolf" found `Snowflake1.png` as "close to what was typed: 100%": its "owfl" is "wolf" with two swaps, and swaps were free. Only the name typed exactly is 100% now: "wolf" is 87% in `Wlof` (one swap) and 75% in `Snowflake` (two).

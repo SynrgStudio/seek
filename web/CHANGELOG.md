@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-19, Seek 0.7.4
+
+- `project.version` is 0.7.4.
+- `notes/tools.md`, grep: a new point, **The time budget**: files over 256 KB are read after the smaller ones, and an answer cut with no match says so first and suggests a glob.
+- New facts, read from the source: `grep_budget_s` (6) and `grep_later_kb` (256).
+
 ## 2026-11-16, Seek 0.7.3
 
 - `project.version` is 0.7.3.
