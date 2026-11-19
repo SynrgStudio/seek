@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.5
+
+- **`grep` reads game engines' sidecar files after the other small files.** In Godot projects, the `.import` and `.uid` files beside each asset and script outnumber the scripts about four to one, and they are small, so 0.7.4's big-files-last order didn't put them after the scripts. Over a folder of sibling Godot repositories, the budget still ran out before reaching the one script with the word. Now `.import`, `.uid` and Unity's `.meta` are read after every other small file, and before the big ones. On a first search of 18,000 such files with a 0.5 s budget, 0.7.4 stopped with no match both times, and 0.7.5 found it both times.
+
 ## 0.7.4
 
 - **`grep` reads big files last.** Under the time budget, a folder of sibling repositories full of big assets used it all up on the first few: an agent searching for a word in a script got "0 matching lines … Stopped at the time budget", and the script was in a repository the walk never reached. Now files over 256 KB wait until every smaller file and folder has been read, so the code comes first wherever it is. Searching all of a folder takes as long as before.

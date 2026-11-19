@@ -878,7 +878,7 @@ bool WalkBefore(const std::wstring& a, const std::wstring& b) {
 struct WalkFile {
     std::wstring path, key, nameKey;
     uint64_t size = 0;
-    bool doc = false, binaryExt = false;
+    bool doc = false, binaryExt = false, sidecar = false;
 };
 
 // Walks a folder the way grep searches it, on a pool of threads that both list folders and take files: hidden entries
@@ -898,7 +898,9 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
     std::vector<DirJob> dirs;
     // Big files, after every other file and folder: under a time budget, the many small ones (the code) are read
     // before a few big ones (assets, data, logs) take it all, wherever they are in the tree.
-    std::deque<WalkFile> later;
+    // Before those, the small files a game engine keeps beside each asset (Godot's .import and .uid, Unity's .meta): a
+    // project has several for each script, and they would share the budget with the scripts.
+    std::deque<WalkFile> aside, later;
     constexpr uint64_t kLater = 256 << 10;
     dirs.push_back({root, std::move(chain)});
     unsigned busy = 0;     // threads holding a job; none, with nothing queued, is the end
@@ -935,7 +937,9 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
             const bool doc = DocExts().count(ext) != 0;
             if (doc && size > kDocMax) continue;
             const bool binaryExt = BinaryExts().count(ext) != 0;
-            (size > kLater && !binaryExt ? outLater : outFiles).push_back({std::move(path), std::move(key), std::move(nameKey), size, doc, binaryExt});
+            const bool sidecar = ext == L".import" || ext == L".uid" || ext == L".meta";
+            ((size > kLater && !binaryExt) || sidecar ? outLater : outFiles)
+                .push_back({std::move(path), std::move(key), std::move(nameKey), size, doc, binaryExt, sidecar});
         } while (FindNextFileW(f, &fd));
         FindClose(f);
     };
@@ -951,8 +955,8 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
             {
                 std::unique_lock lk(qm);
                 // a big file waits while a thread still lists a folder: that may bring small ones
-                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || (!later.empty() && !listing) || busy == 0; });
-                if (files.empty() && dirs.empty() && later.empty()) break;  // and no thread busy: nothing more will come
+                cv.wait(lk, [&] { return !files.empty() || !dirs.empty() || ((!aside.empty() || !later.empty()) && !listing) || busy == 0; });
+                if (files.empty() && dirs.empty() && aside.empty() && later.empty()) break;  // and no thread busy: nothing more will come
                 if (!files.empty()) {
                     fj = std::move(files.front());
                     files.pop_front();
@@ -962,8 +966,9 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
                     dirs.pop_back();
                     ++listing;
                 } else {
-                    fj = std::move(later.front());
-                    later.pop_front();
+                    std::deque<WalkFile>& from = aside.empty() ? later : aside;
+                    fj = std::move(from.front());
+                    from.pop_front();
                     isFile = true;
                 }
                 ++busy;
@@ -975,11 +980,11 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
             {
                 std::lock_guard lk(qm);
                 for (WalkFile& x : newFiles) files.push_back(std::move(x));
-                for (WalkFile& x : newLater) later.push_back(std::move(x));
+                for (WalkFile& x : newLater) (x.sidecar ? aside : later).push_back(std::move(x));
                 for (size_t i = newDirs.size(); i-- > 0;) dirs.push_back(std::move(newDirs[i]));  // the first subfolder on top
                 --busy;
                 if (!isFile) --listing;
-                wake = !newFiles.empty() || !newDirs.empty() || (!isFile && !listing && !later.empty()) || busy == 0;
+                wake = !newFiles.empty() || !newDirs.empty() || (!isFile && !listing && (!aside.empty() || !later.empty())) || busy == 0;
             }
             newFiles.clear();
             newLater.clear();

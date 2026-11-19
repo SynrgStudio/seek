@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-19, Seek 0.7.5
+
+- `project.version` is 0.7.5.
+- `notes/tools.md`, grep, **The time budget**: game engines' sidecar files (`.import`, `.uid`, `.meta`) are read after the other small files, before the big ones.
+
 ## 2026-11-19, Seek 0.7.4
 
 - `project.version` is 0.7.4.
