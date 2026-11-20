@@ -71,7 +71,7 @@ In a folder, or in a single file.
   - `block` shows the whole block a match opens, like a function's body.
 - **When nothing matches.**
   - With no match in the exact case, it retries ignoring case.
-  - A literal pattern with regex signs (`a|b`, `var\(`) that finds nothing is tried as a regex.
+  - A literal pattern with regex signs (`a|b`, `var\(`, `colou?r`, a leading `(?i)`) that finds nothing is tried as a regex.
   - With no text match at all, it suggests file names that look like the pattern.
 - **Long lines.** Matches close together share their context lines. A line longer than 240 characters [grep_line_chars] is cut around each of its matches, up to 4 [grep_line_windows].
 - **The header** says how long the search took, and whether it came from memory, or from a hard disk the first time.

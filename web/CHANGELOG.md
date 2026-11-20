@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-19, Seek 0.7.6
+
+- `project.version` is 0.7.6.
+- `notes/tools.md`, grep: the regex signs that make a literal pattern be tried as a regex now include `colou?r` and a leading `(?i)`.
+
 ## 2026-11-19, Seek 0.7.5
 
 - `project.version` is 0.7.5.

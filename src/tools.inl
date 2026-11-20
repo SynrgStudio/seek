@@ -624,8 +624,10 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
 // name starts with those in a path anyone types (var\("NAME", items\[0\]).
 std::wstring RegexSign(const std::wstring& p) {
     if (p.find(L'|') != std::wstring::npos) return L"|";
-    for (const wchar_t* s : {L".*", L".+"})
+    for (const wchar_t* s : {L".*", L".+", L".?", L"(?:"})
         if (p.find(s) != std::wstring::npos) return s;
+    bool icase = false;  // an inline flag group, "(?i)"
+    if (TakeInlineFlags(p, icase).size() != p.size()) return p.substr(0, p.find(L')') + 1);
     for (const wchar_t* s : {L"\\(", L"\\)", L"\\[", L"\\]", L"\\{", L"\\}", L"\\|", L"\\?", L"\\*", L"\\+"})
         if (p.find(s) != std::wstring::npos) return s;
     for (const wchar_t* s : {L"\\d", L"\\w", L"\\s", L"\\b", L"\\."})

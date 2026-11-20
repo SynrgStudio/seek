@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.6
+
+- **`grep`: `(?i)` and `.?` are regex signs.** A literal pattern that finds nothing is tried as a regex when it has a regex sign, and these two weren't among the signs: `(?i)mirror.?studio` without `regex: true` answered "0 matching lines" and nothing else, in a folder where it matches. Now it is tried as a regex and found, and the answer says so. `(?:` counts too.
+
 ## 0.7.5
 
 - **`grep` reads game engines' sidecar files after the other small files.** In Godot projects, the `.import` and `.uid` files beside each asset and script outnumber the scripts about four to one, and they are small, so 0.7.4's big-files-last order didn't put them after the scripts. Over a folder of sibling Godot repositories, the budget still ran out before reaching the one script with the word. Now `.import`, `.uid` and Unity's `.meta` are read after every other small file, and before the big ones. On a first search of 18,000 such files with a 0.5 s budget, 0.7.4 stopped with no match both times, and 0.7.5 found it both times.
