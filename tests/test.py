@@ -152,6 +152,12 @@ for n in ("WhiteOak_Shelf.png", "Wide_Oval_Lamp_Frame.png", "Wolf_Statue.fbx"):
 code, out = cli("find", {"query": "wolf", "path": S + "\\assets"})
 check("find: a short word's letters scattered along a name aren't a match", "Wolf_Statue.fbx" in out and "WhiteOak_Shelf" not in out, out)
 check("find: initials still are", "Wide_Oval_Lamp_Frame.png" in out, out)
+put("rank/downloads/Boar.stl", "solid x\n")
+for i in range(6):
+    put("rank/build/profiles/bambulab-polaris-5-5-%d.toml" % i, "x=1\n")
+code, out = cli("find", {"query": "Boar stl", "path": S + "\\rank", "near": S + "\\rank\\build\\profiles", "limit": 3})
+check("find: a name with every word whole comes before loose matches that what the user does lifts", out.splitlines()[1:2] and out.splitlines()[1].startswith("downloads\\Boar.stl  ")
+      and "polaris" in out, out)
 put("snow/Snowflake1.png", "")
 put("snow/Owlf_Den.png", "")
 code, out = cli("find", {"query": "wolf", "path": S + "\\snow"})

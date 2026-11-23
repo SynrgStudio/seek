@@ -111,6 +111,7 @@ struct Found {
     int rank = 0;
     int percent = 0;
     int boost = 0;
+    bool whole = false;  // every word typed is in the name as it was typed, not only its letters here and there
     std::vector<std::wstring> why;
 };
 
@@ -500,6 +501,10 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     const std::wstring typed = Lower(query);  // as Jolt keeps what was typed in Ctrl+P
     ForEach(found.size(), [&](size_t at) {
         Found& f = found[at];
+        std::wstring_view leaf(f.key);
+        while (leaf.size() > 3 && leaf.back() == L'\\') leaf.remove_suffix(1);
+        leaf = leaf.substr(leaf.find_last_of(L'\\') + 1);
+        f.whole = !q.words.empty() && std::all_of(q.words.begin(), q.words.end(), [&](const std::wstring& w) { return leaf.find(Lower(w)) != std::wstring_view::npos; });
         if (NoiseBelow(f.key, scopeKey)) f.boost -= 2000;  // caches, package stores, AppData: below the user's own files
         if (f.rank >= kExactName) f.why.push_back(f.rank == kExactProgram ? L"program, exact name" : L"exact name");
         else if (f.rank == kProgramName) f.why.push_back(L"program");
@@ -538,6 +543,9 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     });
     std::stable_sort(found.begin(), found.end(), [](const Found& x, const Found& y) {
         if ((x.percent == 0) != (y.percent == 0)) return x.percent == 0;
+        // a name with every word whole before one with their letters spread: what the user did lately orders each
+        // group, and doesn't lift a loose match over "Boar.stl" for "boar stl"
+        if (x.whole != y.whole) return x.whole;
         return x.key0 + x.boost > y.key0 + y.boost;
     });
     if (rows) {

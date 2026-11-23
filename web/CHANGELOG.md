@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-23, Seek 0.7.7
+
+- `project.version` is 0.7.7.
+- `notes/ranking.md`: names with every word typed whole in them come before the ones that only have the letters; the score orders each group.
+
 ## 2026-11-19, Seek 0.7.6
 
 - `project.version` is 0.7.6.

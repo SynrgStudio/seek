@@ -15,6 +15,8 @@ $$\text{score} = 8\,(m + r) - \min(d, 40) + \sum b$$
 
 Close names (a typo) aren't scored this way: they come after every real match, ordered by how close they are.
 
+The names that have every word typed whole in them come before the ones that only have the letters ("Boar.stl" for "boar stl", before a profile named `…-polaris-5-5.toml`). The score orders each of the two groups.
+
 Then what Seek knows about the user moves the best 2,000 [ranked_results] up or down:
 
 | what Seek knows | points | shown as |

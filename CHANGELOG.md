@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.7
+
+- **`find`: a name with every word typed whole comes before a name that only has their letters.** What the user did lately is worth thousands of points (changed in the last hour: +3,000), more than the matching tells a name that has the words apart from one with their letters close together. So for "Boar stl", printer profiles copied minutes before (`…-polaris-5-5.toml`, with b-o-a-r and s-t-l in them) ranked above `Boar.stl`, which came 9th. Now the names that hold every word as typed come first, and the score, what the user did included, orders each group.
+
 ## 0.7.6
 
 - **`grep`: `(?i)` and `.?` are regex signs.** A literal pattern that finds nothing is tried as a regex when it has a regex sign, and these two weren't among the signs: `(?i)mirror.?studio` without `regex: true` answered "0 matching lines" and nothing else, in a folder where it matches. Now it is tried as a regex and found, and the answer says so. `(?:` counts too.
