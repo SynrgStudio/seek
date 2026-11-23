@@ -222,6 +222,7 @@ fact("grep_context_max", code("src/tools.inl", r'ArgInt\(a, "before", around, 0,
 fact("regex_line_chars", code("src/grep.inl", r"text.data\(\) \+ std::min\(e, s \+ (\d+)\);  // very long lines"), "characters", "regex looks at this many characters of a very long line", "src/grep.inl", None)
 fact("cache_mb", code("src/util.inl", r"uint64_t cacheMb = (\d+);"), "MB", "folders kept in memory for grep, at most, by default (cache in seek.txt)", "src/util.inl", None)
 fact("cache_idle_min", code("src/cache.inl", r"kCacheIdle = (\d+) \* 60 \* 1000"), "min", "a folder nobody searched for this long is let go", "src/cache.inl", None)
+fact("cache_wait_s", code("src/cache.inl", r"wait_for\(lk, std::chrono::seconds\((\d+)\)"), "s", "a search waits at most this long for a folder being read into memory; then it walks the folder itself", "src/cache.inl", None)
 fact("cache_changes_max", code("src/cache.inl", r"kDirtyMax = (\d+);"), "changes", "more changes than this between two searches, and a kept folder is read again whole", "src/cache.inl", None)
 fact("ranked_results", code("src/tools.inl", r"constexpr size_t kRanked = (\d+);"), "results", "the best names by name that find ranks again by what the user is doing, and pages through", "src/tools.inl", None)
 fact("jolt_check_min", code("src/server.inl", r"if \(tick % (\d+) == 0\)\s*\n\s*for \(wchar_t c : FixedDrives\(\)\) LoadVolume\(c, false\);"),

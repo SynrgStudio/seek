@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.8
+
+- **`grep` doesn't wait on the folders kept in memory after many changes at once.** Right after a `git checkout -f` in a kept folder, with the disk busy, greps took 5 to 22 s, past their 6 s budget: one 4 KB file took 5 s, 52 small files 22 s. Three waits added up:
+  - a grep of one file first brought the whole kept folder up to date, applying every change the watchers had seen, one file at a time, and then read the file. Now a single file is just read;
+  - a kept folder applied up to 20,000 changes one by one before answering. Past 500 now, it is let go and walked again, on a dozen threads;
+  - a search waited up to 10 s for a folder being read into memory, and then walked on its own. Now it waits 2 s at most.
+
 ## 0.7.7
 
 - **`find`: a name with every word typed whole comes before a name that only has their letters.** What the user did lately is worth thousands of points (changed in the last hour: +3,000), more than the matching tells a name that has the words apart from one with their letters close together. So for "Boar stl", printer profiles copied minutes before (`…-polaris-5-5.toml`, with b-o-a-r and s-t-l in them) ranked above `Boar.stl`, which came 9th. Now the names that hold every word as typed come first, and the score, what the user did included, orders each group.

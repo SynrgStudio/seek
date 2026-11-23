@@ -555,6 +555,15 @@ check("status: the background process answers", "background process" in out and 
 check("status: the folders in memory are listed", "Folders in memory for grep:" in out and "\n  " + L + "  " in out and "files," in out, out)
 check("status: what the start found in the change journals", CI or "Made while no background process watched" in out, out)
 
+# ---- many changes at once in a kept folder (a checkout, a build): read again rather than applied one by one
+for i in range(600):
+    put("live/burst/f%03d.txt" % i, "gamma %d\n" % i)
+time.sleep(1.5)
+out = cli("grep", {"pattern": "beta", "path": os.path.join(L, "a.txt")}, via="--call")[1]
+check("cache: one file is read, not the kept folder brought up to date first", "beta one" in out and "from Seek's memory" not in out, out)
+out = cli("grep", {"pattern": "gamma 599", "path": L}, via="--call")[1]
+check("cache: past 500 changes the folder is walked again", "f599.txt" in out and "from Seek's memory" not in out, out)
+
 
 # ---- made and then changed while a background process watched: the next one knows it too
 put("journal/made_then_changed_qz.txt", "made\n")

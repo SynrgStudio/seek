@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-23, Seek 0.7.8
+
+- `project.version` is 0.7.8.
+- `cache_changes_max` is 500 (was 20,000): past that many changes a kept folder is read again whole. `notes/memory.md` says why.
+- New fact, read from the source: `cache_wait_s` (2), how long a search waits for a folder being read into memory. `notes/memory.md` cites it, and says a search of one file never waits.
+
 ## 2026-11-23, Seek 0.7.7
 
 - `project.version` is 0.7.7.

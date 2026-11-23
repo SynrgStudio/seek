@@ -34,7 +34,9 @@ std::vector<std::shared_ptr<KeptFolder>> g_folders;
 std::unordered_map<std::wstring, uint64_t> g_tooBig;  // roots over the budget, and when that was seen
 bool g_building = false;
 constexpr uint64_t kCacheIdle = 20 * 60 * 1000, kTooBigWait = 30 * 60 * 1000;
-constexpr size_t kDirtyMax = 20000;  // more changes than this before a search: read the folder again instead
+// More changes than this before a search: read the folder again instead. They are applied one by one, before the
+// search answers; a walk reads on a dozen threads, so past a few hundred (a checkout, a build) it is quicker.
+constexpr size_t kDirtyMax = 500;
 
 uint64_t CacheBudget() { return g_rules.cacheMb << 20; }
 
@@ -360,6 +362,9 @@ bool CacheApply(const std::shared_ptr<KeptFolder>& f) {
 // A search answered from memory, when the folder is kept and the search follows the default rules.
 std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const BytePre& pre) {
     if (q.hidden || q.ignored || !g_watching) return std::nullopt;
+    // one file: read it, rather than bring the whole kept folder up to date first
+    const DWORD ra = GetFileAttributesW(LongPath(q.root).c_str());
+    if (ra == INVALID_FILE_ATTRIBUTES || !(ra & FILE_ATTRIBUTE_DIRECTORY)) return std::nullopt;
     const std::wstring key = Key(q.root);
     std::shared_ptr<KeptFolder> f;
     {
@@ -371,8 +376,8 @@ std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const
         };
         f = pick();
         if (!f) return std::nullopt;
-        if (!f->ready) {  // being read in: that ends sooner than a walk of its own would
-            g_cacheCv.wait_for(lk, std::chrono::seconds(10), [&] {
+        if (!f->ready) {  // being read in: that may end sooner than a walk of its own would, but not waited for long
+            g_cacheCv.wait_for(lk, std::chrono::seconds(2), [&] {
                 f = pick();
                 return !f || f->ready;
             });

@@ -4,7 +4,7 @@ status: stable
 updated: 2026-11-11
 ---
 
-After a folder's first search, the daemon reads its text files into memory on a thread of its own. A search that comes while that is happening waits for it, because it ends sooner than a second walk would.
+After a folder's first search, the daemon reads its text files into memory on a thread of its own. A search that comes while that is happening waits for it up to 2 s [cache_wait_s], because it often ends sooner than a second walk would; then it walks. A search of a single file never waits: it reads that file.
 
 From then on:
 
@@ -17,7 +17,7 @@ From then on:
 - **The whole folder is read again** after:
   - a change to `.gitignore`, `.ignore` or `info\exclude`;
   - lost watcher events;
-  - more than 20,000 [cache_changes_max] changes between two searches.
+  - more than 500 [cache_changes_max] changes between two searches (a checkout, a build): applying them one by one would take longer than reading the folder again.
 - **Searches with `hidden` or `ignored`** walk the folder as before, because the copy only holds what the default rules let in.
 - **A search below a kept folder** uses it, unless the rules left that part out.
 
