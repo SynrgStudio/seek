@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.11
+
+- **`find` with nothing: the index's age is the drives' own, and the note about names let go reads as one.** It gave the oldest drive's index age ("10 h ago") even when the file asked for was on a drive indexed 6 h ago, and said "what was created since is watched." right before "some names made since were let go". Now it gives the age of the drive below `path`, or the span over every drive ("from 6 h ago to 10 h ago, by drive"), and says "what was created since is watched, but more changes came than are kept, so some of those names were let go …".
+- **`seek --status` doesn't make up a count of names let go.** When it only knew that some were (from a file an older Seek saved), it said "2 let go so far"; now it says "some", and saves it as unknown.
+
 ## 0.7.10
 
 - **Names let go are found again after a restart, and a folder is walked while some are missing.** 0.7.9 let go of build output first, but two things still hid what an agent made:

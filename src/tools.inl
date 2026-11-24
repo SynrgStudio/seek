@@ -78,11 +78,17 @@ std::wstring IndexingNote() {
     return L"(Still indexing " + s + L" for the first time: until that ends, names there are missing. A path there is walked right away.)\n";
 }
 
-std::wstring IndexAge() {
-    int64_t oldest = 0;
+// When the index was taken: of the drive of `path`, or of every drive, as a span when they differ.
+std::wstring IndexAge(const std::wstring& path = L"") {
+    int64_t oldest = 0, newest = 0;
     for (const auto& v : Volumes())
-        if (v->stamp && (!oldest || v->stamp < oldest)) oldest = v->stamp;
-    return oldest ? Ago(oldest) : L"unknown";
+        if (v->stamp && (path.empty() || towupper(path[0]) == v->letter)) {
+            if (!oldest || v->stamp < oldest) oldest = v->stamp;
+            if (v->stamp > newest) newest = v->stamp;
+        }
+    if (!oldest) return L"unknown";
+    const std::wstring a = Ago(newest), b = Ago(oldest);
+    return a == b ? a : L"from " + a + L" to " + b + L", by drive";
 }
 
 // Checks a folder argument: empty when fine, or what is wrong.
@@ -447,12 +453,11 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     if (found.empty() && rows) return {L"#rows\t0\t1\treal\n", false, true};
     if (found.empty()) {
         // with names made since the index let go, "nothing" on every drive may not be the whole truth: say so
-        const std::wstring letGo = scope.empty() && LetGoAll()
-                                       ? L" More changes came than are kept, so some names made since were let go, the oldest first: for one made hours"
-                                         L" ago, give its folder as path."
-                                       : std::wstring();
-        return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
-                    L"; what was created since is watched.)" + letGo + L" For text inside files, use grep.\n" + building,
+        const std::wstring since = scope.empty() && LetGoAll()
+                                       ? L"; what was created since is watched, but more changes came than are kept, so some of those names were let"
+                                         L" go, the oldest first: for one made hours ago, give its folder as path.)"
+                                       : L"; what was created since is watched.)";
+        return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge(scope) + since + L" For text inside files, use grep.\n" + building,
                 false, true};
     }
 
@@ -1109,7 +1114,7 @@ std::wstring StatusText() {
         std::lock_guard lk(g_actM);
         out += L"Since the indexes were taken: " + Thousands(g_added.size()) + L" names created (the ones deleted again left out), " + Thousands(g_removed.size()) +
                L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go (of the names created, what builds make first)" +
-               (LetGoAll() ? L": " + Thousands(LetGoAll()) + L" let go so far (their drives' journals are read whole at the next start)" : std::wstring()) + L". Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
+               (LetGoAll() ? L": " + LetGoText() + L" let go so far (their drives' journals are read whole at the next start)" : std::wstring()) + L". Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
                DateText(g_actSince) + L", saved to activity.txt every 5 min.\n";
     }
     std::wstring caught;

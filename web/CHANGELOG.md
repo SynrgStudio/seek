@@ -1,5 +1,9 @@
 # What changed in Seek's corpus
 
+## 2026-11-23, Seek 0.7.11
+
+- `project.version` is 0.7.11. The notes don't change.
+
 ## 2026-11-23, Seek 0.7.10
 
 - `project.version` is 0.7.10.
