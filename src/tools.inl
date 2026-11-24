@@ -387,6 +387,12 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         return s;
     };
     ScanOut real = indexed ? ScanIndex(vols, added, keep, scope, realMatch) : walkScan(realMatch);
+    // Names made since the index were let go (more changes than are kept): below a folder, one of them may be what was
+    // asked for. With nothing found, the folder is walked, as one newer than the index is.
+    if (indexed && !scope.empty() && real.total == 0 && g_addedLetGo) {
+        indexed = false;
+        real = walkScan(realMatch);
+    }
     // How many there are: what is left to show when every match was kept; otherwise the index's count, less what was
     // dropped among the kept ones (the same path twice, private, deleted, or outside the path asked), which is about
     // right: the others weren't looked at.
@@ -437,10 +443,16 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         building += L"(" + Thousands(hidden) + (hidden == 1 ? L" more is" : L" more are") +
                     L" in what .gitignore leaves out, or in dependency and cache folders: ignored=true shows them.)\n";
     if (found.empty() && rows) return {L"#rows\t0\t1\treal\n", false, true};
-    if (found.empty())
+    if (found.empty()) {
+        // with names made since the index let go, "nothing" on every drive may not be the whole truth: say so
+        const std::wstring letGo = scope.empty() && g_addedLetGo
+                                       ? L" More changes came than are kept, so " + Thousands(g_addedLetGo) +
+                                             L" names made since were let go, the oldest first: for one made hours ago, give its folder as path."
+                                       : std::wstring();
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
-                    L"; what was created since is watched.) For text inside files, use grep.\n" + building,
+                    L"; what was created since is watched.)" + letGo + L" For text inside files, use grep.\n" + building,
                 false, true};
+    }
 
     if (summary) {
         std::unordered_map<std::wstring, int> byFolder, byArea, byExt, byDrive;
@@ -1094,7 +1106,8 @@ std::wstring StatusText() {
     {
         std::lock_guard lk(g_actM);
         out += L"Since the indexes were taken: " + Thousands(g_added.size()) + L" names created (the ones deleted again left out), " + Thousands(g_removed.size()) +
-               L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go. Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
+               L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go (of the names created, what builds make first)" +
+               (g_addedLetGo ? L": " + Thousands(g_addedLetGo) + L" let go so far" : std::wstring()) + L". Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
                DateText(g_actSince) + L", saved to activity.txt every 5 min.\n";
     }
     std::wstring caught;

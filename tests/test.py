@@ -784,8 +784,33 @@ if not CI:
           "known but not there: %s; there but not known: %s\n%s" % (sorted(set(got) - set(want)), sorted(set(want) - set(got)), r))
     subprocess.run([EXE, "--stop"], timeout=60)
     shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
-    os.environ["SEEK_HOME"] = home0
     del os.environ["SEEK_TEST_LOSE_BATCHES"]
+
+    # ---- more names made since the index than are kept: what builds make goes first, then the oldest, and an answer
+    # with nothing says that some were let go
+    os.environ["SEEK_HOME"] = os.path.join(TMP, "seek-test-home-since")
+    os.environ["SEEK_TEST_SINCE_MAX"] = "200"
+    shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
+    subprocess.run(["powershell", "-NoProfile", "-Command", "Start-Process -FilePath '%s' -ArgumentList '--daemon' -WindowStyle Hidden" % EXE], timeout=60)
+    for _ in range(300):
+        try:
+            if "ready" in pipe_call("0.0.0 test", "__status_rows", {}).get("text", ""):
+                break
+        except OSError:
+            pass
+        time.sleep(0.3)
+    # (which ones go first isn't checked here: the whole drive's changes come in too, more than 200 on a busy PC)
+    put("since/notes/keep_me_qz.ps1", "x\n")
+    time.sleep(1)
+    for i in range(300):
+        put("since/plain/p%03d.txt" % i, "x")
+    time.sleep(2)
+    t = pipe_call("0.0.0 test", "find", {"query": "keep_me_qz"}).get("text", "")
+    check("since: then the oldest, and an answer with nothing says names were let go", t.startswith("Nothing named like") and "were let go" in t, t)
+    subprocess.run([EXE, "--stop"], timeout=60)
+    shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
+    del os.environ["SEEK_TEST_SINCE_MAX"]
+    os.environ["SEEK_HOME"] = home0
 shutil.rmtree(ROOT, ignore_errors=True)
 shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
 shutil.rmtree(JOLT, ignore_errors=True)

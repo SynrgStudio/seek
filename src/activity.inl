@@ -28,7 +28,13 @@ std::shared_ptr<const std::vector<AddedItem>> g_addedList;  // g_added as a list
 int64_t g_actSince = 0;                                // since when changes have been watched
 std::atomic<bool> g_watching{false};
 constexpr size_t kActMax = 120000, kActKeep = 80000;
-constexpr size_t kSinceMax = 100000, kSinceKeep = 80000;  // created or deleted since the index: over that, the oldest go
+// Created or deleted since the index: over kSinceMax, the oldest go, down to kSinceKeep. SEEK_TEST_SINCE_MAX sets a
+// smaller one, for the tests.
+const size_t kSinceMax = [] {
+    const std::wstring t = Expand(L"%SEEK_TEST_SINCE_MAX%");
+    return t.find(L'%') == std::wstring::npos && !t.empty() ? static_cast<size_t>(std::wcstoul(t.c_str(), nullptr, 10)) : size_t{100000};
+}();
+const size_t kSinceKeep = kSinceMax * 4 / 5;
 
 // Over max entries, the oldest go and keep stay. With g_actM held.
 template <class Map, class TimeOf>
@@ -43,6 +49,31 @@ void PruneOldest(Map& m, size_t max, size_t keep, TimeOf timeOf) {
 }
 
 const std::unordered_set<std::wstring>& JunkDirs();  // grep.inl
+
+// What a build or an engine makes by the thousand: in a dependency or cache folder, or in one of these. Of the names
+// made since the index, they are let go first, so that a burst of builds doesn't push out the files people made.
+bool Generated(const std::wstring& key) {
+    static const std::unordered_set<std::wstring> more = {L"target", L"incremental", L".godot", L"obj", L".fingerprint", L"deps", L"build"};
+    for (size_t at = 3; at < key.size();) {
+        size_t end = key.find(L'\\', at);
+        if (end == std::wstring::npos) break;  // the name itself doesn't count, only the folders it is in
+        const std::wstring seg = key.substr(at, end - at);
+        if (JunkDirs().count(seg) || more.count(seg)) return true;
+        at = end + 1;
+    }
+    return false;
+}
+
+std::atomic<uint64_t> g_addedLetGo{0};  // names made since the index that were let go, past kSinceMax
+
+// g_added over kSinceMax: what is generated goes first, then the oldest. With g_actM held.
+void PruneAdded() {
+    if (g_added.size() <= kSinceMax) return;
+    const size_t before = g_added.size();
+    constexpr int64_t kGeneratedAge = 30ll * 24 * 3600 * 10000000;  // a generated name counts as a month older
+    PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time - (Generated(a.key) ? kGeneratedAge : 0); });
+    g_addedLetGo += before - g_added.size();
+}
 
 // A folder renamed or moved here: the watchers see the folder, and nothing of what is inside. That is walked, with a
 // budget, and counts as made since the index. Caches and private places are left out, as they rank last anyway.
@@ -62,7 +93,7 @@ void AddedWalk(const std::wstring& root) {
         g_removed.erase(a.key);
         g_added[a.key] = std::move(a);
     }
-    PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+    PruneAdded();
 }
 
 // Records a change. Returns whether it made a name known as made since the index that wasn't known before.
@@ -102,7 +133,7 @@ bool ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
                 fresh = !g_added.count(key);
                 g_added[key] = {path, dir, key, t};
                 g_addedList.reset();
-                PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time; });
+                PruneAdded();
             }
         }
         PruneOldest(g_act, kActMax, kActKeep, [](const Act& a) { return a.time; });

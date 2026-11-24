@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.9
+
+- **What builds make no longer pushes out the files people made.** Seek keeps up to 100,000 names made since the index; past that, the oldest went. On a PC running builds and game engines all day, about 110,000 changes came in an hour, two thirds of them build output (`target`, `incremental`, `.godot`, …), so a script an agent wrote two hours earlier was let go, and `find` answered "Nothing named like … on all drives". Now names in dependency, cache and build folders (`target`, `incremental`, `.godot`, `obj`, `build`, `deps`) go first, then the oldest.
+- **When names were let go, `find` says so, and looks.** An answer with nothing on every drive says that some names made since the index were let go, and to give the folder as `path`. A `find` with `path` that finds nothing walks that folder. `seek --status` says how many were let go.
+
 ## 0.7.8
 
 - **`grep` doesn't wait on the folders kept in memory after many changes at once.** Right after a `git checkout -f` in a kept folder, with the disk busy, greps took 5 to 22 s, past their 6 s budget: one 4 KB file took 5 s, 52 small files 22 s. Three waits added up:

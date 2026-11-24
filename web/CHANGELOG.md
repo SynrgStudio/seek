@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-23, Seek 0.7.9
+
+- `project.version` is 0.7.9.
+- `notes/how-it-works.md`: a new point, **How much it keeps**: up to 100,000 names made since the index, what builds make goes first, and a `find` that finds nothing after names were let go walks the folder or says so.
+- New fact, read from the source: `since_max` (100,000).
+
 ## 2026-11-23, Seek 0.7.8
 
 - `project.version` is 0.7.8.
