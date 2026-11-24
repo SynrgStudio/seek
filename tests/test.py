@@ -749,6 +749,45 @@ out = stats()
 check("stats: read from its file without a background process", re.search(today + r"\s+find\s+1\s", out) is not None, out)
 r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60)
 check("status: without the background process, it says so", r.returncode == 1 and "isn't running" in r.stdout.decode("utf-8", "replace"), r.stdout.decode("utf-8", "replace"))
+
+
+# ---- the command line for people: seek engine -p repo, seek g text folder, seek i (step by step). From the test folder,
+# so its paths show from there. Never a number in a step, nor -o: those open files.
+def human(*args, stdin=None):
+    r = subprocess.run([EXE, *args], capture_output=True, timeout=120, input=stdin.encode("utf-8") if stdin else None, cwd=ROOT)
+    return r.returncode, r.stdout.decode("utf-8", "replace")
+
+
+ENG = [os.path.join(ROOT, "repo", "src", n).lower() for n in ("engine.cpp", "engine.h")]
+code, out = human("engine", "-p", "repo")
+check("people: names in a pipe, one full path a line", code == 0 and sorted(l.lower() for l in out.split()) == ENG, out)
+code, out = human("engine", "-p", "repo", "-e", "cpp")
+check("people: -e, the extension", code == 0 and [l.lower() for l in out.split()] == ENG[:1], out)
+code, out = human("engine", "-p", "repo", "--color", "always")
+check("people: --color always, the name's letters lit and the count", "\x1b[1;33mengine\x1b[0m" in out and "2 found" in out and "repo\\src\\" in out, out)
+code, out = human("engine", "-p", "repo", "-s")
+check("people: -s, counts by type and folder", code == 0 and "2 found" in out and ".cpp" in out and "by folder" in out, out)
+code, out = human("g", "quick brown", "repo")
+check("people: grep in a pipe, path:line:text", code == 0 and out.strip().lower() == ENG[0] + ":2:// the quick brown fox", out)
+code, out = human("g", "quick brown", "repo", "--color", "always")
+check("people: grep's match lit", "\x1b[1;31mquick brown\x1b[0m" in out and "1 line in 1 file" in out, out)
+code, out = human("g", "QUICK", "repo", "-c")
+check("people: grep -c, this case only", code == 1 and out == "", out)
+code, out = human("qqzzxxkkvv", "-p", "repo")
+check("people: nothing found, exit code 1 and nothing printed", code == 1 and out == "", out)
+code, out = human("engine", "-zz")
+check("people: an unknown flag, exit code 2", code == 2 and "-zz" in out, out)
+code, out = human("-h")
+check("people: -h", code == 0 and "seek i report pdf" in out and "seek --cli" in out, out)
+code, out = human("r", "1h", "-p", "repo")
+check("people: recent", code == 0 and ENG[0] in out.lower(), out)
+code, out = human("i", "engine", stdin="-p repo\n.h\n?\nu\n-d\nu\nr 1h\nq\n")
+steps = out.split(" › ")
+check("people: step by step, each line changes the search",
+      len(steps) == 9 and "2 found" in steps[1] and "  1  repo\\src\\engine.h" in steps[2] and "1 found" in steps[2]
+      and "seek engine .h -p repo" in steps[3] and "2 found" in steps[4] and "Nothing found" in steps[5] and "2 found" in steps[6]
+      and "recent 1h" in steps[7], out)
+subprocess.run([EXE, "--stop"], timeout=60)  # the background process these started
 # ---- a watcher that loses every batch of changes (too many at once): what was made, renamed and deleted comes from the
 # drive's journal instead. An instance of its own, as the setting is read once.
 if not CI:

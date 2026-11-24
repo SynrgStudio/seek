@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-24, Seek 0.8.0
+
+- `project.version` is 0.8.0.
+- `notes/settings.md`: the command line for people: `seek report pdf`, `seek g`, `seek r`, the flags, colors in a terminal and paths in a pipe, and `seek i`, step by step.
+
 ## 2026-11-23, Seek 0.7.11
 
 - `project.version` is 0.7.11. The notes don't change.

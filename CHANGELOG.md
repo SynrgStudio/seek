@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- **A command line for people.** Until now a search from a terminal was `seek --cli find "{\"query\":\"report .pdf\"}"`. Now:
+  - `seek report pdf` finds names, `seek g TODO src` finds text in the files below a folder, `seek r 2h` lists what changed lately, with short flags: `-p` folder, `-n` how many, `-d`/`-f` folders or files, `-e pdf,md`, `-s` counts by type and folder, `-a` ignored folders too, `-o` open the first; for grep `-i`, `-c`, `-x`, `-g *.md`, `-v`;
+  - in a terminal, colors: the folder dim, the letters typed lit in the name, grep's file, line and match each in its own; paths open when clicked in Windows Terminal and VS Code. `NO_COLOR` and `--color never|always` are honored;
+  - in a pipe, one full path a line (grep: `path:line:text`), and exit code 1 when nothing is found, so it goes into other commands;
+  - `seek i report pdf` goes step by step: each line typed changes the search and shows it again (`-p ~/Projects`, `-n 50`, a word more, `-word` out, a flag again undoes it), Enter shows more, a number opens that result, `o`/`c` show it in its folder or copy its path, `g text` searches inside the files, `u` goes back, `?` gives the search as one command.
+
+  It asks the background process with the commands for programs (`PROTOCOL.md`), so its answers are the same search agents get. `seek` with no arguments is still the MCP server, and `--cli`, `--call` and the rest are unchanged.
+
 ## 0.7.11
 
 - **`find` with nothing: the index's age is the drives' own, and the note about names let go reads as one.** It gave the oldest drive's index age ("10 h ago") even when the file asked for was on a drive indexed 6 h ago, and said "what was created since is watched." right before "some names made since were let go". Now it gives the age of the drive below `path`, or the span over every drive ("from 6 h ago to 10 h ago, by drive"), and says "what was created since is watched, but more changes came than are kept, so some of those names were let go …".

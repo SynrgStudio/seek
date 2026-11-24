@@ -59,6 +59,7 @@ const char* const kBuild = SEEK_VERSION " " __DATE__ " " __TIME__;  // a daemon 
 #include "cache.inl"
 #include "tools.inl"
 #include "server.inl"
+#include "human.inl"  // the command line for people: seek report pdf, seek g TODO src, seek i
 
 int wmain(int argc, wchar_t** argv) {
     if (argc >= 2) {
@@ -74,22 +75,7 @@ int wmain(int argc, wchar_t** argv) {
             Print(L"seek " + Wide(SEEK_VERSION) + L"\n");
             return 0;
         }
-        if (a == L"--help" || a == L"-h" || a == L"/?") {
-            Print(L"Seek " + Wide(SEEK_VERSION) +
-                  L": fast file search for AI agents (MCP over stdio).\n"
-                  L"  seek                         MCP server: what an agent runs\n"
-                  L"  seek --cli <tool> [json]     run a tool here: find, grep or recent\n"
-                  L"  seek --call <tool> [json]    the same, through the shared background process\n"
-                  L"  seek --stop [here]           stop the background process (here: only if it runs from this file)\n"
-                  L"  seek --status                how it is: indexes, watchers, folders in memory\n"
-                  L"  seek --stats [days|all]      what agents asked, by day: calls, times, what found nothing\n"
-                  L"  seek --reindex [C D ...]     walk the drives again now (only where Jolt's index isn't used)\n"
-                  L"  seek --version\n"
-                  L"Example: seek --cli find \"{\\\"query\\\":\\\"report .pdf\\\"}\"\n"
-                  L"Its files: " + DataDir() + L"   Settings: " + SettingsFile() + L"\n"
-                  L"https://seek.synrgs.tech\n");
-            return 0;
-        }
+        return HumanMain(argc, argv);  // seek report pdf, seek g TODO src, seek -h ...
     }
     return McpMain();
 }
