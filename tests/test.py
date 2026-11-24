@@ -808,6 +808,22 @@ if not CI:
     t = pipe_call("0.0.0 test", "find", {"query": "keep_me_qz"}).get("text", "")
     check("since: then the oldest, and an answer with nothing says names were let go", t.startswith("Nothing named like") and "were let go" in t, t)
     subprocess.run([EXE, "--stop"], timeout=60)
+    subprocess.run(["powershell", "-NoProfile", "-Command", "Start-Process -FilePath '%s' -ArgumentList '--daemon' -WindowStyle Hidden" % EXE], timeout=60)
+    for _ in range(300):
+        try:
+            if "ready" in pipe_call("0.0.0 test", "__status_rows", {}).get("text", ""):
+                break
+        except OSError:
+            pass
+        time.sleep(0.3)
+    for _ in range(120):  # the start reads the journals before it says what it found there
+        r = subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace")
+        if "Catching up" not in r:
+            break
+        time.sleep(0.5)
+    # (whether keep_me_qz comes back isn't checked: at 200 names, the journal read whole brings more than that)
+    check("since: the next start knows names were let go, and reads the journal whole", "let go so far" in r and "all of its journal" in r, r)
+    subprocess.run([EXE, "--stop"], timeout=60)
     shutil.rmtree(os.environ["SEEK_HOME"], ignore_errors=True)
     del os.environ["SEEK_TEST_SINCE_MAX"]
     os.environ["SEEK_HOME"] = home0

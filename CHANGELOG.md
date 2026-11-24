@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.10
+
+- **Names let go are found again after a restart, and a folder is walked while some are missing.** 0.7.9 let go of build output first, but two things still hid what an agent made:
+  - the count of names let go lived only in the running process. After an update the new one didn't know, gave no warning, and read the change journal only from where the last run stopped, so what had been let go stayed lost. Now each drive's count is saved (`#letgo` in activity.txt) and cleared by a newer index. A start with names let go reads that drive's journal whole, from its index on, and finds again the ones still there. A file saved by an older Seek doesn't have the count, so a saved list near the limit counts as one;
+  - `find` below a folder walked it only when it found nothing, so a partial answer (2 of 9 files named `bench…`) hid the rest. Now, while names are let go on that drive, a folder with up to 20,000 names in the index is walked: 9 of 9.
+
 ## 0.7.9
 
 - **What builds make no longer pushes out the files people made.** Seek keeps up to 100,000 names made since the index; past that, the oldest went. On a PC running builds and game engines all day, about 110,000 changes came in an hour, two thirds of them build output (`target`, `incremental`, `.godot`, …), so a script an agent wrote two hours earlier was let go, and `find` answered "Nothing named like … on all drives". Now names in dependency, cache and build folders (`target`, `incremental`, `.godot`, `obj`, `build`, `deps`) go first, then the oldest.

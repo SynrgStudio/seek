@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-23, Seek 0.7.10
+
+- `project.version` is 0.7.10.
+- `notes/how-it-works.md`, **How much it keeps**: the count of names let go is kept across restarts, the next start reads those journals whole for the ones still there, and a `find` below a small folder walks it meanwhile.
+
 ## 2026-11-23, Seek 0.7.9
 
 - `project.version` is 0.7.9.

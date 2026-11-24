@@ -274,10 +274,12 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
         return out;
     };
     // is the folder in the index? (one created after it was taken, or on a drive it doesn't cover, is walked instead)
+    // With names made since the index let go on that drive, a small folder is walked anyway: the index and what is
+    // left of those names would give part of what is there, and say nothing of the rest.
     bool indexed = scope.empty();
     for (const auto& v : vols) {
         uint32_t n;
-        if (!indexed && towupper(scope[0]) == v->letter && FindNode(*v, scope, n)) indexed = true;
+        if (!indexed && towupper(scope[0]) == v->letter && FindNode(*v, scope, n)) indexed = !LetGo(v->letter) || !SubtreeAtMost(*v, n, 20000);
     }
     // A part of the path asked for ("docs/"): looked at for every name that matches, not only for the best ones kept.
     // Those are the shallowest, and what is asked for is often deep: "docs/ .png" used to find nothing.
@@ -389,7 +391,7 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     ScanOut real = indexed ? ScanIndex(vols, added, keep, scope, realMatch) : walkScan(realMatch);
     // Names made since the index were let go (more changes than are kept): below a folder, one of them may be what was
     // asked for. With nothing found, the folder is walked, as one newer than the index is.
-    if (indexed && !scope.empty() && real.total == 0 && g_addedLetGo) {
+    if (indexed && !scope.empty() && real.total == 0 && LetGo(scope[0])) {
         indexed = false;
         real = walkScan(realMatch);
     }
@@ -445,9 +447,9 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
     if (found.empty() && rows) return {L"#rows\t0\t1\treal\n", false, true};
     if (found.empty()) {
         // with names made since the index let go, "nothing" on every drive may not be the whole truth: say so
-        const std::wstring letGo = scope.empty() && g_addedLetGo
-                                       ? L" More changes came than are kept, so " + Thousands(g_addedLetGo) +
-                                             L" names made since were let go, the oldest first: for one made hours ago, give its folder as path."
+        const std::wstring letGo = scope.empty() && LetGoAll()
+                                       ? L" More changes came than are kept, so some names made since were let go, the oldest first: for one made hours"
+                                         L" ago, give its folder as path."
                                        : std::wstring();
         return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge() +
                     L"; what was created since is watched.)" + letGo + L" For text inside files, use grep.\n" + building,
@@ -1107,7 +1109,7 @@ std::wstring StatusText() {
         std::lock_guard lk(g_actM);
         out += L"Since the indexes were taken: " + Thousands(g_added.size()) + L" names created (the ones deleted again left out), " + Thousands(g_removed.size()) +
                L" deleted; past " + Thousands(kSinceMax) + L" of either, the oldest go (of the names created, what builds make first)" +
-               (g_addedLetGo ? L": " + Thousands(g_addedLetGo) + L" let go so far" : std::wstring()) + L". Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
+               (LetGoAll() ? L": " + Thousands(LetGoAll()) + L" let go so far (their drives' journals are read whole at the next start)" : std::wstring()) + L". Changes remembered: " + Thousands(g_act.size()) + L", watched since " +
                DateText(g_actSince) + L", saved to activity.txt every 5 min.\n";
     }
     std::wstring caught;

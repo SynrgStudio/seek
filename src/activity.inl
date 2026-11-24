@@ -64,15 +64,38 @@ bool Generated(const std::wstring& key) {
     return false;
 }
 
-std::atomic<uint64_t> g_addedLetGo{0};  // names made since the index that were let go, past kSinceMax
+// Per drive: names made since its index that were let go, past kSinceMax. Kept across restarts (activity.txt), and
+// cleared when the drive has a newer index.
+std::atomic<uint64_t> g_letGo[26];
+uint64_t LetGo(wchar_t letter) {
+    const int i = static_cast<int>(towupper(letter)) - L'A';
+    return i >= 0 && i < 26 ? g_letGo[i].load() : 0;
+}
+uint64_t LetGoAll() {
+    uint64_t n = 0;
+    for (const auto& x : g_letGo) n += x;
+    return n;
+}
 
 // g_added over kSinceMax: what is generated goes first, then the oldest. With g_actM held.
 void PruneAdded() {
     if (g_added.size() <= kSinceMax) return;
-    const size_t before = g_added.size();
     constexpr int64_t kGeneratedAge = 30ll * 24 * 3600 * 10000000;  // a generated name counts as a month older
-    PruneOldest(g_added, kSinceMax, kSinceKeep, [](const AddedItem& a) { return a.time - (Generated(a.key) ? kGeneratedAge : 0); });
-    g_addedLetGo += before - g_added.size();
+    auto timeOf = [](const AddedItem& a) { return a.time - (Generated(a.key) ? kGeneratedAge : 0); };
+    std::vector<int64_t> times;
+    times.reserve(g_added.size());
+    for (const auto& e : g_added) times.push_back(timeOf(e.second));
+    std::nth_element(times.begin(), times.begin() + (times.size() - kSinceKeep), times.end());
+    const int64_t cut = times[times.size() - kSinceKeep];
+    for (auto it = g_added.begin(); it != g_added.end();) {
+        if (timeOf(it->second) >= cut) {
+            ++it;
+            continue;
+        }
+        const int i = static_cast<int>(towupper(it->first[0])) - L'A';
+        if (i >= 0 && i < 26) ++g_letGo[i];
+        it = g_added.erase(it);
+    }
 }
 
 // A folder renamed or moved here: the watchers see the folder, and nothing of what is inside. That is walked, with a
@@ -148,6 +171,7 @@ bool ActRecord(const std::wstring& path, uint8_t kind, int64_t when = 0) {
 void ActIndexRenewed(wchar_t letter, int64_t stamp) {
     const int64_t cut = stamp - 15 * kMinute;
     const wchar_t l = static_cast<wchar_t>(towlower(letter));
+    if (towupper(letter) >= L'A' && towupper(letter) <= L'Z') g_letGo[towupper(letter) - L'A'] = 0;  // the new index has them
     std::lock_guard lk(g_actM);
     g_addedList.reset();
     for (auto it = g_added.begin(); it != g_added.end();) it = it->first[0] == l && it->second.time < cut ? g_added.erase(it) : std::next(it);
@@ -476,6 +500,8 @@ void ActSave() {
         }
     // What the index lacks and what it still has, whole. The lines below don't say it: each path has its last change
     // only, so a file made and then changed is a changed one there, and they hold the newest 40,000.
+    for (int i = 0; i < 26; ++i)  // names let go: the next start reads the whole journal for them
+        if (g_letGo[i]) out += "#letgo\t" + std::string(1, static_cast<char>('A' + i)) + "\t" + std::to_string(g_letGo[i].load()) + "\n";
     for (const AddedItem& a : added) out += "#added\t" + std::to_string(a.time) + (a.dir ? "\tD\t" : "\tF\t") + Utf8(a.path) + "\n";
     for (const auto& [k, t] : removed) out += "#removed\t" + std::to_string(t) + "\t" + Utf8(k) + "\n";
     for (const Act& a : all) out += std::to_string(a.time) + "\t" + std::to_string(a.kind) + "\t" + Utf8(a.path) + "\n";
@@ -495,6 +521,7 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
     std::vector<AddedItem> savedAdded;  // "#added" and "#removed" lines: what the last run knew the index lacked or still had
     std::vector<std::pair<std::wstring, int64_t>> savedRemoved;
     int64_t since = 0;
+    std::array<uint64_t, 26> letGo{};  // "#letgo" lines
     const int64_t old = NowFt() - 30 * kDay;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -506,6 +533,10 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
             char* end = nullptr;
             const DWORDLONG id = _strtoui64(line.c_str() + 7, &end, 10);
             if (end && *end == '\t') g_journalMark[static_cast<size_t>(line[5] - 'A')] = {id, _strtoi64(end + 1, nullptr, 10)};
+            continue;
+        }
+        if (line.rfind("#letgo\t", 0) == 0 && line.size() > 9 && line[7] >= 'A' && line[7] <= 'Z' && line[8] == '\t') {  // "#letgo\tC\t<count>"
+            letGo[static_cast<size_t>(line[7] - 'A')] = _strtoui64(line.c_str() + 9, nullptr, 10);
             continue;
         }
         if (line.rfind("#added\t", 0) == 0) {  // "#added\t<time>\tD|F\t<path>"
@@ -528,6 +559,18 @@ void ActLoad(const std::array<int64_t, 26>& indexStamp) {
         Act x{Wide(line.substr(b + 1)), _strtoi64(line.c_str(), nullptr, 10), static_cast<uint8_t>(atoi(line.c_str() + a + 1))};
         if (x.time >= old) loaded.push_back(std::move(x));
     }
+    // Names the last run let go: the journals of those drives are read whole this time, from their index on, for the
+    // ones still there. A file from before 0.7.9 doesn't say; a saved list that big says it.
+    bool anyLetGo = false;
+    for (const uint64_t n : letGo) anyLetGo = anyLetGo || n;
+    if (!anyLetGo && savedAdded.size() >= kSinceKeep)
+        for (const AddedItem& a : savedAdded)
+            if (const int i = static_cast<int>(towupper(a.path[0])) - L'A'; i >= 0 && i < 26) letGo[static_cast<size_t>(i)] = 1;
+    for (size_t i = 0; i < 26; ++i)
+        if (letGo[i]) {
+            g_letGo[i] = letGo[i];
+            g_journalMark[i] = {};
+        }
     auto stampOf = [&](const std::wstring& key) {
         const int i = key.empty() ? -1 : static_cast<int>(towupper(key[0])) - L'A';
         return i >= 0 && i < 26 ? indexStamp[static_cast<size_t>(i)] : 0;

@@ -356,6 +356,22 @@ bool FindNode(const Volume& v, const std::wstring& path, uint32_t& out) {
     return true;
 }
 
+// Has a folder at most max names below it, at any depth? Stops counting past max.
+bool SubtreeAtMost(const Volume& v, uint32_t n, size_t max) {
+    v.Kids();
+    std::vector<uint32_t> todo{n};
+    size_t seen = 0;
+    while (!todo.empty()) {
+        const uint32_t x = todo.back();
+        todo.pop_back();
+        for (uint32_t k = v.kidStart[x]; k < v.kidStart[x + 1]; ++k) {
+            if (++seen > max) return false;
+            todo.push_back(v.kids[k]);
+        }
+    }
+    return true;
+}
+
 bool InScope(const Volume& v, uint32_t i, uint32_t scope, uint8_t scopeDepth) {
     while (v.node[i].depth > scopeDepth) i = v.node[i].parent;
     return i == scope;
