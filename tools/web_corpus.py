@@ -225,6 +225,14 @@ fact("cache_idle_min", code("src/cache.inl", r"kCacheIdle = (\d+) \* 60 \* 1000"
 fact("since_max", code("src/activity.inl", r"size_t\{(\d+)\};"), "names", "made since the index that Seek keeps, and as many deleted; past that, what builds make goes first, then the oldest", "src/activity.inl", None)
 fact("cache_wait_s", code("src/cache.inl", r"wait_for\(lk, std::chrono::seconds\((\d+)\)"), "s", "a search waits at most this long for a folder being read into memory; then it walks the folder itself", "src/cache.inl", None)
 fact("cache_changes_max", code("src/cache.inl", r"kDirtyMax = (\d+);"), "changes", "more changes than this between two searches, and a kept folder is read again whole", "src/cache.inl", None)
+TERM = r"\n    return a\.tool == L'g' \? (\d+) : (\d+);"  # the command line for people: how many in a terminal
+PIPE = r"if \(!g_term\.pretty\) return a\.tool == L'g' \? (\d+) : (\d+);"  # and in a pipe
+fact("cli_names_terminal", code("src/human.inl", TERM, 2), "results", "names the command line shows in a terminal, unless -n says otherwise", "src/human.inl", None)
+fact("cli_text_terminal", code("src/human.inl", TERM, 1), "lines", "lines of text (seek g) the command line shows in a terminal, unless -n says otherwise", "src/human.inl", None)
+fact("cli_recent_terminal", code("src/human.inl", TERM, 2), "results", "recent changes (seek r) the command line shows in a terminal, unless -n says otherwise", "src/human.inl", None)
+fact("cli_pipe", code("src/human.inl", PIPE, 2), "results", "names or recent changes the command line prints into a pipe, unless -n says otherwise", "src/human.inl", None)
+fact("cli_pipe_text", code("src/human.inl", PIPE, 1), "lines", "lines of text (seek g) the command line prints into a pipe, unless -n says otherwise", "src/human.inl", None)
+fact("recent_default_days", code("src/tools.inl", r'ParseSpan\(ArgStr\(a, "since"\), (\d+) \* kDay\)'), "days", "how far back recent looks when no span is given", "src/tools.inl", None)
 fact("ranked_results", code("src/tools.inl", r"constexpr size_t kRanked = (\d+);"), "results", "the best names by name that find ranks again by what the user is doing, and pages through", "src/tools.inl", None)
 fact("jolt_check_min", code("src/server.inl", r"if \(tick % (\d+) == 0\)\s*\n\s*for \(wchar_t c : FixedDrives\(\)\) LoadVolume\(c, false\);"),
      "min", "how often Seek looks for a newer copy of Jolt's index (and of its own)", "src/server.inl", None)

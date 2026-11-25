@@ -586,6 +586,48 @@ what = "more changes than this between two searches, and a kept folder is read a
 source = "src/cache.inl"
 date = 2026-11-25
 
+[facts.cli_names_terminal]
+value = 30
+unit = "results"
+what = "names the command line shows in a terminal, unless -n says otherwise"
+source = "src/human.inl"
+date = 2026-11-25
+
+[facts.cli_text_terminal]
+value = 50
+unit = "lines"
+what = "lines of text (seek g) the command line shows in a terminal, unless -n says otherwise"
+source = "src/human.inl"
+date = 2026-11-25
+
+[facts.cli_recent_terminal]
+value = 30
+unit = "results"
+what = "recent changes (seek r) the command line shows in a terminal, unless -n says otherwise"
+source = "src/human.inl"
+date = 2026-11-25
+
+[facts.cli_pipe]
+value = 1000
+unit = "results"
+what = "names or recent changes the command line prints into a pipe, unless -n says otherwise"
+source = "src/human.inl"
+date = 2026-11-25
+
+[facts.cli_pipe_text]
+value = 2000
+unit = "lines"
+what = "lines of text (seek g) the command line prints into a pipe, unless -n says otherwise"
+source = "src/human.inl"
+date = 2026-11-25
+
+[facts.recent_default_days]
+value = 7
+unit = "days"
+what = "how far back recent looks when no span is given"
+source = "src/tools.inl"
+date = 2026-11-25
+
 [facts.ranked_results]
 value = 2000
 unit = "results"

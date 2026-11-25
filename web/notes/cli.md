@@ -19,7 +19,7 @@ seek i report pdf          step by step: each line typed changes the search
 
 - **`seek <words>`** finds files and folders by name, on every fixed drive, in milliseconds. `seek f <words>` and `seek find <words>` are the same.
 - **`seek g <text> <folder>`** finds text inside the files below a folder; without the folder, below the current one. `seek grep` is the same.
-- **`seek r <span>`** lists what was created, changed, renamed or opened lately, newest first. The span is `30m`, `2h`, `3d` or `2w`; 7 days by default. `seek recent` is the same.
+- **`seek r <span>`** lists what was created, changed, renamed or opened lately, newest first. The span is `30m`, `2h`, `3d` or `2w`; 7 days [recent_default_days] by default. `seek recent` is the same.
 - **`seek i …`** starts step by step mode (below). `seek i g TODO` and `seek i r 2h` start it on grep or recent.
 - **`seek -h`** lists everything. `seek` alone, with no arguments, is the MCP server an agent starts, not a search.
 
@@ -60,7 +60,7 @@ seek g "fn \w+_test" -x          a regex
 ## Recent
 
 ```
-seek r                 the last 7 days
+seek r                 the last 7 days (the default)
 seek r 30m             the last half hour
 seek r 3d -p ~\Projects
 seek r 2h report       only names like "report"
@@ -92,7 +92,7 @@ Each line says when, what happened (`created`, `changed`, `renamed`, `opened`) a
 
 Short flags that take no value go together: `-ds` is `-d -s`.
 
-**How many.** In a terminal, 30 names, 50 lines of text, 30 recent; in a pipe, 1,000 (text: 2,000). `-n` changes it; the footer says how many there are and how many are shown.
+**How many.** In a terminal, 30 [cli_names_terminal] names, 50 [cli_text_terminal] lines of text, 30 [cli_recent_terminal] recent; in a pipe, 1,000 [cli_pipe] (text: 2,000 [cli_pipe_text]). `-n` changes it; the footer says how many there are and how many are shown.
 
 ## In a terminal
 
