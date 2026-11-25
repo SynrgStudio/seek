@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.4
+
+- **A `grep` that finds nothing no longer spends seconds suggesting names.** When the text could be a file's name, grep suggests names like it below the folder. On a drive where names made since the index were let go, that suggestion walked the folder for up to 4 s, and more than once, so a grep that searched 535 files in 0.2 s answered after 16 s. The suggestion now comes from the index only.
+
 ## 0.8.3
 
 - **`grep` with name globs keeps to the index on a busy PC.** 0.8.1 walked the folder instead whenever names made since the index had been let go on its drive (more changes than Seek keeps, which a PC running builds all day reaches within hours). So on that PC the same grep on the root of a 1 TB hard disk still stopped at its 30 s budget after a couple of hundred files. Now, as `find` does, a small folder (up to 20,000 names) is walked, and a big one still takes its files from the index: 535 files, complete, in under a second. The answer then says that a file made since the index may be missing, and to give its folder as `path` to walk it.

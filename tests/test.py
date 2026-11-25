@@ -913,9 +913,12 @@ if not CI:
     t = pipe_call("0.0.0 test", "find", {"query": "keep_me_qz"}).get("text", "")
     check("since: then the oldest, and an answer with nothing says names were let go", t.startswith("Nothing named like") and "were let go" in t, t)
     # grep with name globs below a big folder still takes the files from the index, and says what may be missing
-    t = pipe_call("0.0.0 test", "grep", {"pattern": "qzqz never", "path": os.environ["SystemRoot"], "glob": "*.qzqznone"}).get("text", "")
+    # (a text that could be a name: grep then suggests names like it, from the index only, without a walk of seconds)
+    t0 = time.time()
+    t = pipe_call("0.0.0 test", "grep", {"pattern": "qzqznever", "path": os.environ["SystemRoot"], "glob": "*.qzqznone"}).get("text", "")
+    took = time.time() - t0
     check("since: grep with name globs on a big folder keeps to the index, and says names made since may be missing",
-          "from the index" in t and "may be missing" in t, t)
+          "from the index" in t and "may be missing" in t and took < 3, "%.1f s\n%s" % (took, t))
     subprocess.run([EXE, "--stop"], timeout=60)
     subprocess.run(["powershell", "-NoProfile", "-Command", "Start-Process -FilePath '%s' -ArgumentList '--daemon' -WindowStyle Hidden" % EXE], timeout=60)
     for _ in range(300):

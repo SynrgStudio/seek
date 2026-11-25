@@ -429,7 +429,8 @@ ToolOut FindCore(const Json& a, size_t rows) {
     ScanOut real = indexed ? ScanIndex(vols, added, keep, scope, realMatch) : walkScan(realMatch);
     // Names made since the index were let go (more changes than are kept): below a folder, one of them may be what was
     // asked for. With nothing found, the folder is walked, as one newer than the index is.
-    if (indexed && !scope.empty() && real.total == 0 && LetGo(scope[0])) {
+    // Not for grep's suggestion of names like its text (indexOnly): that walk, on a big folder, took seconds for an aside.
+    if (indexed && !scope.empty() && real.total == 0 && LetGo(scope[0]) && !ArgBool(a, "__index_only", false)) {
         indexed = false;
         real = walkScan(realMatch);
     }
@@ -1019,13 +1020,15 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
         if (q.pattern.find_first_of(L" \\/") == std::wstring::npos && g_indexReady) {  // maybe it is a file's name
             Json fa;
             fa.kind = Json::Obj;
-            Json qv, pv, lv;
+            Json qv, pv, lv, io;
             qv.kind = pv.kind = Json::Str;
             qv.s = Utf8(q.pattern);
             pv.s = Utf8(base);
             lv.kind = Json::Num;
             lv.n = 5;
-            fa.o = {{"query", qv}, {"path", pv}, {"limit", lv}};
+            io.kind = Json::Bool;
+            io.b = true;
+            fa.o = {{"query", qv}, {"path", pv}, {"limit", lv}, {"__index_only", io}};
             ToolOut names = ToolFind(fa);
             if (!names.error && names.text.rfind(L"Nothing", 0) != 0) out += L"No text matches, but some names look like it:\n" + names.text;
         }
