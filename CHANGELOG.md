@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2
+
+- **The command line for people, three fixes found while writing its guide** (`web/notes/cli.md`):
+  - `seek g text -e cpp,h` searched every file: `-e` was only read for names. Now it is `*.cpp` and `*.h`;
+  - `-g` given twice kept only the last one. Now each adds a glob: `-g *.md -g !*.min.js`;
+  - `seek "final draft"` looked for the two words apart, so `final big draft.md` matched too. Words given in quotes are now looked for as typed.
+
 ## 0.8.1
 
 - **`grep` with name globs takes the files from the index, instead of walking the folder.** With ten globs that are names (`*.gradle`, `*.kts`, `Cargo.toml`, `README.md`, …) on the root of a 1 TB hard disk full of project copies, the walk stopped at a 30 s budget after 282 files. Now when every glob is a name, the files that have them come from the drive index, with what the watchers saw made since: 535 files, all of them, in 0.3 s. They are left out as a walk leaves them out (`.gitignore`, dependency folders, hidden files, private places), and the answer says the files came from the index. A folder the index doesn't have, a glob on the path, or a drive where names were let go is walked as before.

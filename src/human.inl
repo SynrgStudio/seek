@@ -182,7 +182,7 @@ std::wstring CommandLine(const Ask& a) {
     if (a.regex) s += L" -x";
     if (a.all) s += L" -a";
     if (a.summary) s += L" -s";
-    if (!a.glob.empty()) s += L" -g " + Quoted(a.glob);
+    if (!a.glob.empty()) s += L" -g " + Quoted(a.glob);  // several, joined by commas: one -g says them all
     if (!a.without.empty()) s += L" -v " + Quoted(a.without);
     if (!a.nearTo.empty()) s += L" --near " + Quoted(ShortPath(a.nearTo));
     if (a.limit > 0) s += L" -n " + std::to_wstring(a.limit);
@@ -266,7 +266,11 @@ Parsed Apply(Ask& a, const std::vector<std::wstring>& tokens, bool stepping) {
                 if (!x.empty()) a.exts.push_back(Lower(x));
                 at = end + 1;
             }
-        } else if (t == L"-g" || t == L"--glob") value(a.glob);
+        } else if (t == L"-g" || t == L"--glob") {  // each one more: -g *.md -g !*.min.js; "-g" alone in a step, none
+            std::wstring g;
+            value(g);
+            a.glob = g.empty() ? L"" : a.glob.empty() ? g : a.glob + L"," + g;
+        }
         else if (t == L"-v" || t == L"--without") value(a.without);
         else if (t == L"-t" || t == L"--since") value(a.since);
         else if (t == L"--color") {
@@ -383,7 +387,9 @@ std::string Field(const char* k, int v) { return std::string(",\"") + k + "\":" 
 std::string Field(const char* k, bool v) { return std::string(",\"") + k + "\":" + (v ? "true" : "false"); }
 
 std::wstring NameQueryText(const Ask& a) {
-    std::wstring q = JoinWords(a.words);
+    std::wstring q;
+    for (const auto& w : a.words)  // "final draft", one word given in quotes, is looked for as typed
+        q += (q.empty() ? L"" : L" ") + (w.find(L' ') != std::wstring::npos && w.find(L'"') == std::wstring::npos ? L"\"" + w + L"\"" : w);
     if (!a.exts.empty()) q += (q.empty() ? L"" : L" ") + std::wstring(L"ext:") + JoinWords(a.exts, L",");
     return q;
 }
@@ -604,8 +610,9 @@ void ShowGrep(const Ask& a, Page& pg, size_t from, bool stepping) {
     std::string args = "{\"pattern\":" + JsonQuote(Utf8(JoinWords(a.words))) + Field("path", a.path.empty() ? g_cwd : a.path);
     if (a.regex) args += Field("regex", true);
     if (a.kase) args += Field("case", std::wstring(a.kase == 1 ? L"insensitive" : L"sensitive"));
-    if (!a.glob.empty()) {
-        std::wstring gl = a.glob;  // *.md,*.txt or "*.md *.txt"
+    std::wstring gl = a.glob;  // *.md,*.txt or "*.md *.txt"; -e cpp,h is *.cpp and *.h
+    for (const auto& e : a.exts) gl += L",*." + e;
+    if (!Trim(gl).empty()) {
         std::replace(gl.begin(), gl.end(), L',', L' ');
         std::string list;
         for (const auto& g : Tokens(gl)) list += (list.empty() ? "" : ",") + JsonQuote(Utf8(g));

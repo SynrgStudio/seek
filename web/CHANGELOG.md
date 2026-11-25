@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-25, Seek 0.8.2
+
+- `project.version` is 0.8.2.
+- New note, `notes/cli.md`: the whole guide to the command line for people. The four commands, names, text and recent, every flag, what a terminal shows and what a pipe gets, exit codes, `seek i` step by step with each command, opening results and `SEEK_EDITOR`, and what isn't there yet.
+- `notes/settings.md`: points to it.
+
 ## 2026-11-25, Seek 0.8.1
 
 - `project.version` is 0.8.1.

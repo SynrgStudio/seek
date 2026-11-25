@@ -21,7 +21,7 @@ Seek's own files are in `%LOCALAPPDATA%\Seek`:
 - `activity.txt`, with what it saw change;
 - `log.txt`, with every call.
 
-The command line, for people (from 0.8.0):
+The command line, for people (from 0.8.0; the whole guide is `cli.md`):
 
 ```
 seek report pdf              names with those words, on every drive (typos are forgiven)
