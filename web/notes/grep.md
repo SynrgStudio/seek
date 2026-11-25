@@ -4,7 +4,7 @@ status: stable
 updated: 2026-11-25
 ---
 
-1. **The files.** When every `glob` is a name (`*.gradle`, `Cargo.toml`, `capacitor.config.*`), the files come from the drive index, with what the watchers saw made since, instead of a walk: a whole drive's few hundred matching names in milliseconds. They are left out as a walk leaves them out (`.gitignore`, dependency folders, hidden files, private places). A folder the index doesn't have, a glob on the path, or a drive where names made since the index were let go is walked.
+1. **The files.** When every `glob` is a name (`*.gradle`, `Cargo.toml`, `capacitor.config.*`), the files come from the drive index, with what the watchers saw made since, instead of a walk: a whole drive's few hundred matching names in milliseconds. They are left out as a walk leaves them out (`.gitignore`, dependency folders, hidden files, private places). A folder the index doesn't have, or a glob on the path, is walked. On a drive where names made since the index were let go (more changes than are kept), a small folder is walked, and a big one still comes from the index, with a note that a file made since may be missing.
 1. **The walk.** One pool of up to 12 [grep_threads] threads both lists folders and takes files, files first, so the queue stays short. Results are sorted back into the order a single walk gives: a folder's files, then its subfolders, by name.
 2. **The rules.**
    - At the root of each repository Seek adds the user's global excludes and `.git\info\exclude`, then each folder's `.gitignore` and `.ignore`.

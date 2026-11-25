@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.3
+
+- **`grep` with name globs keeps to the index on a busy PC.** 0.8.1 walked the folder instead whenever names made since the index had been let go on its drive (more changes than Seek keeps, which a PC running builds all day reaches within hours). So on that PC the same grep on the root of a 1 TB hard disk still stopped at its 30 s budget after a couple of hundred files. Now, as `find` does, a small folder (up to 20,000 names) is walked, and a big one still takes its files from the index: 535 files, complete, in under a second. The answer then says that a file made since the index may be missing, and to give its folder as `path` to walk it.
+
 ## 0.8.2
 
 - **The command line for people, three fixes found while writing its guide** (`web/notes/cli.md`):

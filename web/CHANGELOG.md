@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-25, Seek 0.8.3
+
+- `project.version` is 0.8.3.
+- `notes/grep.md`, **The files**: on a drive where names made since the index were let go, a small folder is walked and a big one still comes from the index, with a note.
+
 ## 2026-11-25, the command line's numbers
 
 - New facts, read from the source: `cli_names_terminal` (30), `cli_text_terminal` (50), `cli_recent_terminal` (30), `cli_pipe` (1,000), `cli_pipe_text` (2,000) and `recent_default_days` (7). `notes/cli.md` cites them where it gives those numbers.

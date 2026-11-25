@@ -791,8 +791,10 @@ ToolOut ToolFind(const Json& a, size_t rows) {
 // grep with globs that are all names (*.gradle, Cargo.toml, capacitor.config.*): the files that have them, from the
 // drive index, so the folder isn't walked to find them. On a 1 TB hard disk the walk stopped at a 30 s budget after
 // 282 files; the index names them at once. Left out as a walk leaves them out: what .gitignore leaves out, dependency
-// and cache folders, private places. nullptr when the index can't say: a folder it hasn't got, a drive where names
-// made since it were let go, a glob on the path, or a folder inside a dependency folder (walked as it always was).
+// and cache folders, private places. nullptr when the index can't say: a folder it hasn't got, a glob on the path, or a
+// folder inside a dependency folder (walked as it always was). Where names made since the index were let go on that
+// drive, a small folder is walked (as find does), but a big one still comes from the index, and the answer says what
+// may be missing: walking a whole hard disk for the few names made in the last hours took the whole budget.
 std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q) {
     // only where the watchers keep the index current: on its own (seek --cli), it doesn't know what was made since
     if (q.include.empty() || !g_watching || q.root.size() < 3 || q.root[1] != L':') return nullptr;
@@ -804,12 +806,13 @@ std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q) {
     const wchar_t letter = static_cast<wchar_t>(towupper(q.root[0]));
     const std::wstring rootKey = Key(q.root);
     const std::vector<std::wstring> junkList(JunkDirs().begin(), JunkDirs().end());
-    if (LetGo(letter) || (!q.ignored && AnySegment(rootKey, junkList))) return nullptr;
+    if (!q.ignored && AnySegment(rootKey, junkList)) return nullptr;
     const auto vols = Volumes();
     for (uint32_t vi = 0; vi < vols.size(); ++vi) {
         const Volume& v = *vols[vi];
         uint32_t root;
         if (v.letter != letter || !FindNode(v, q.root, root) || !v.node[root].dir) continue;
+        if (LetGo(letter) && SubtreeAtMost(v, root, 20000)) return nullptr;  // small: a walk has everything, quickly
         IgnoreMap im;
         if (!q.ignored) im = MakeIgnoreMap(v, vi, root, q.root);
         const size_t relAt = rootKey.size() + (rootKey.back() == L'\\' ? 0 : 1);
@@ -955,10 +958,13 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
                         (r.searched == 1 ? L" file" : L" files") + (r.picked ? L" named like the globs, from the index" : L"") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
                         L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" +
                         (r.fromMemory ? L", read from Seek's memory, not the drive"
-                         : ms > 1000 && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
-                                                            : L"") +
+                         : ms > 1000 && !r.picked && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
+                                                                         : L"") +
                         L").\n";
     std::wstring tail;
+    if (r.picked && LetGo(q.root[0]))  // the index, and what is left of the names made since: what may be missing
+        tail += L"More changes came on " + q.root.substr(0, 2) + L" since its index (" + IndexAge(q.root) +
+                L") than are kept, so a file named like the globs made in that time may be missing: give its folder as path to walk it.\n";
     if (r.timedOut) {
         // the kinds of file most met: a glob to one of them is the likeliest way to fit in the budget
         std::vector<std::pair<int, std::wstring>> kinds;
