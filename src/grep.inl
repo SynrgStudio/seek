@@ -497,6 +497,9 @@ struct GrepQuery {
     Around context;
     int perFile = 5;
     uint64_t budgetMs = 6000;
+    // The files to search, picked from the drive index by name (globs that are all names: *.gradle, Cargo.toml): then
+    // the folder isn't walked. A whole hard disk took minutes to walk for a few hundred files the index names at once.
+    std::shared_ptr<const std::vector<std::wstring>> picked;
 };
 
 constexpr size_t kNamedSkips = 5;  // how many of the files passed over are named in the answer
@@ -508,7 +511,7 @@ struct GrepResult {
     std::vector<std::wstring> unreadableFiles;                // the first few that couldn't be read
     std::unordered_map<std::wstring, int> noFilter;  // documents without a text filter, by extension
     std::unordered_map<std::wstring, int> kinds;     // the files met that aren't binary, by extension: for a glob to suggest
-    bool timedOut = false, fromMemory = false;
+    bool timedOut = false, fromMemory = false, picked = false;
     std::wstring error;
 };
 
@@ -1000,6 +1003,63 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
     return !late;
 }
 
+// Searches the files picked from the index (q.picked) as a walk would have met them: hidden files and files in hidden
+// folders only with q.hidden, nothing only in the cloud, and the big ones last. false: the deadline cut it short.
+template <class OnFile>
+bool SearchPicked(const GrepQuery& q, uint64_t deadline, OnFile&& onFile) {
+    std::vector<WalkFile> soon, big;  // the big ones last, as a walk takes them
+    std::unordered_map<std::wstring, bool> hiddenDir;  // folders below the root, by key: hidden or system
+    const std::wstring rootKey = Key(q.root);
+    auto hiddenOn = [&](const std::wstring& path) {  // a folder on the way from the root to the file
+        for (size_t at = path.find(L'\\', rootKey.size() + 1); at != std::wstring::npos; at = path.find(L'\\', at + 1)) {
+            const std::wstring dir = path.substr(0, at), key = Key(dir);
+            auto it = hiddenDir.find(key);
+            if (it == hiddenDir.end()) {
+                const DWORD a = GetFileAttributesW(LongPath(dir).c_str());
+                it = hiddenDir.emplace(key, a != INVALID_FILE_ATTRIBUTES && (a & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))).first;
+            }
+            if (it->second) return true;
+        }
+        return false;
+    };
+    for (const std::wstring& path : *q.picked) {
+        if (GetTickCount64() > deadline) return false;
+        WIN32_FILE_ATTRIBUTE_DATA d;
+        if (!GetFileAttributesExW(LongPath(path).c_str(), GetFileExInfoStandard, &d)) continue;  // gone since the index
+        if (d.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) continue;
+        if (!q.hidden && ((d.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) || hiddenOn(path))) continue;
+        WalkFile f;
+        f.path = path;
+        f.key = Key(path);
+        f.nameKey = Lower(LeafOf(path));
+        const std::wstring ext = ExtOf(f.nameKey);
+        f.size = (static_cast<uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
+        f.doc = DocExts().count(ext) != 0;
+        if (f.doc && f.size > kDocMax) continue;
+        f.binaryExt = BinaryExts().count(ext) != 0;
+        (f.size > (256 << 10) && !f.binaryExt ? big : soon).push_back(std::move(f));
+    }
+    for (WalkFile& f : big) soon.push_back(std::move(f));
+    std::atomic<size_t> next{0};
+    std::atomic<bool> late{false};
+    auto work = [&] {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        for (size_t i; (i = next.fetch_add(1)) < soon.size();) {
+            if (GetTickCount64() > deadline) {
+                late = true;
+                break;
+            }
+            onFile(soon[i]);
+        }
+        if (SUCCEEDED(co)) CoUninitialize();
+    };
+    const unsigned nth = static_cast<unsigned>(std::max<size_t>(1, std::min<size_t>({12, std::thread::hardware_concurrency(), soon.size()})));
+    std::vector<std::thread> workers;
+    for (unsigned i = 0; i < nth; ++i) workers.emplace_back(work);
+    for (auto& t : workers) t.join();
+    return !late;
+}
+
 // Folders kept in memory (cache.inl): an answer from there, or nothing; and a folder to keep after a walk.
 std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const BytePre& pre);
 void CacheAfterWalk(const GrepQuery& q, uint64_t textBytes);
@@ -1165,6 +1225,18 @@ GrepResult RunGrep(const GrepQuery& q) {
             }
             if (SUCCEEDED(co)) CoUninitialize();
         }).join();
+    } else if (q.picked) {
+        res.picked = true;
+        done = SearchPicked(q, deadline, [&](const WalkFile& f) {
+            if (f.binaryExt) ++binaries;
+            else if (!f.doc || q.documents) {
+                {
+                    std::lock_guard lk(fm);
+                    ++res.kinds[ExtOf(f.nameKey)];
+                }
+                searchFile(f);
+            }
+        });
     } else {
         const bool inJunk = q.ignored || AnySegment(rootKey, std::vector<std::wstring>(JunkDirs().begin(), JunkDirs().end()));
         const std::atomic<bool> never{false};
@@ -1189,6 +1261,6 @@ GrepResult RunGrep(const GrepQuery& q) {
     res.binaries = binaries;
     res.unreadable = unreadable;
     res.timedOut = !done;
-    if (done && ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_DIRECTORY)) CacheAfterWalk(q, textBytes);
+    if (done && !q.picked && ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_DIRECTORY)) CacheAfterWalk(q, textBytes);
     return res;
 }

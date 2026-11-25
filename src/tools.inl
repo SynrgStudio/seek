@@ -108,6 +108,36 @@ std::wstring CheckFolder(const std::wstring& path, bool fileOk, std::wstring* co
     return L"";
 }
 
+// The Linux distros of WSL registered for this user, from the registry: asking Windows for \\wsl.localhost would start
+// WSL's virtual machine. Docker's own are left out: nobody keeps files there.
+const std::vector<std::wstring>& WslDistros() {
+    static const std::vector<std::wstring> names = [] {
+        std::vector<std::wstring> out;
+        HKEY lxss;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Lxss", 0, KEY_READ, &lxss) != ERROR_SUCCESS) return out;
+        wchar_t sub[256];
+        for (DWORD i = 0, n = 256; RegEnumKeyExW(lxss, i, sub, &n, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS; ++i, n = 256) {
+            wchar_t name[256];
+            DWORD size = sizeof(name);
+            if (RegGetValueW(lxss, sub, L"DistributionName", RRF_RT_REG_SZ, nullptr, name, &size) == ERROR_SUCCESS && _wcsnicmp(name, L"docker-desktop", 14) != 0)
+                out.push_back(name);
+        }
+        RegCloseKey(lxss);
+        return out;
+    }();
+    return names;
+}
+
+// For an answer about every drive: WSL's files aren't on them, and how to look there.
+std::wstring WslNote() {
+    const auto& d = WslDistros();
+    if (d.empty()) return L"";
+    std::wstring names;
+    for (const std::wstring& n : d) names += (names.empty() ? L"" : L", ") + n;
+    return L"The files inside WSL (" + names + L") aren't on the drives: to look there, give path \\\\wsl.localhost\\" + d[0] +
+           L"\\home (walked, not indexed; the first call starts WSL).\n";
+}
+
 // ---- find
 
 struct Found {
@@ -207,7 +237,9 @@ IgnoreMap MakeIgnoreMap(const Volume& v, uint32_t vol, uint32_t root, const std:
 // rows: for a program that lists the results itself (Seek's window): that many of the best, as "D" or "F", a tab and
 // the path on each line, after a line "#rows", how many match, 1 when that count is exact, and "real", "near" (close
 // names, a typo) or "scattered". Nothing is read from the drive for them: the program reads what it shows.
-ToolOut ToolFind(const Json& a, size_t rows = 0) {
+ToolOut ToolFind(const Json& a, size_t rows = 0);
+
+ToolOut FindCore(const Json& a, size_t rows) {
     const std::wstring query = Trim(ArgStr(a, "query"));
     if (query.empty()) return {L"find needs a query: a name or part of one, like \"report\", \"jolt.exe\", \".blend\" or \"*.log\".", true, false, false, L"bad_args"};
     std::wstring scope = ArgStr(a, "path"), nearDir = ArgStr(a, "near");
@@ -457,7 +489,8 @@ ToolOut ToolFind(const Json& a, size_t rows = 0) {
                                        ? L"; what was created since is watched, but more changes came than are kept, so some of those names were let"
                                          L" go, the oldest first: for one made hours ago, give its folder as path.)"
                                        : L"; what was created since is watched.)";
-        return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge(scope) + since + L" For text inside files, use grep.\n" + building,
+        return {L"Nothing named like \"" + query + L"\" " + where + L". (Index taken " + IndexAge(scope) + since + L" For text inside files, use grep.\n" +
+                    (scope.empty() ? WslNote() : L"") + building,
                 false, true};
     }
 
@@ -689,6 +722,141 @@ bool HardDisk(wchar_t letter) {
     return known[i] == 1;
 }
 
+void SetStr(Json& j, const char* key, const std::wstring& v) {
+    for (auto& [k, x] : j.o)
+        if (k == key) {
+            x.kind = Json::Str;
+            x.s = Utf8(v);
+            return;
+        }
+    Json x;
+    x.kind = Json::Str;
+    x.s = Utf8(v);
+    j.o.push_back({key, std::move(x)});
+}
+
+// find, with what agents write in a query that isn't a filter: "path:C:\x" (or "in:") is taken as the folder, as if
+// given as path; another "word:" stays in the name looked for, and the answer says it isn't a filter.
+ToolOut ToolFind(const Json& a, size_t rows) {
+    const std::wstring query = ArgStr(a, "query");
+    std::wstring rest, folder, unknown;
+    for (size_t i = 0; i < query.size();) {
+        if (iswspace(query[i])) {
+            rest += query[i++];
+            continue;
+        }
+        size_t j = i;
+        bool quoted = false;
+        int braces = 0;
+        for (; j < query.size() && (quoted || braces || !iswspace(query[j])); ++j) {
+            if (query[j] == L'"') quoted = !quoted;
+            else if (query[j] == L'{') ++braces;
+            else if (query[j] == L'}' && braces) --braces;
+        }
+        const std::wstring t = query.substr(i, j - i);
+        i = j;
+        const size_t colon = t.find(L':');
+        const std::wstring pre = colon == std::wstring::npos ? L"" : Lower(t.substr(0, colon));
+        const bool named = pre.size() >= 2 && std::all_of(pre.begin(), pre.end(), [](wchar_t c) { return iswalpha(c) != 0; });
+        if (named && (pre == L"path" || pre == L"in") && colon + 1 < t.size()) {
+            folder = t.substr(colon + 1);
+            if (folder.size() >= 2 && folder.front() == L'"' && folder.back() == L'"') folder = folder.substr(1, folder.size() - 2);
+            continue;
+        }
+        if (named && pre != L"ext" && pre != L"type") unknown += (unknown.empty() ? L"\"" : L", \"") + pre + L":\"";
+        rest += t;
+    }
+    if (folder.empty() && unknown.empty()) return FindCore(a, rows);
+    Json b = a;
+    std::wstring note;
+    if (!folder.empty()) {
+        if (Trim(rest).empty())
+            return {L"\"path:" + folder + L"\" in the query is the folder: add what to look for, and give the folder as path.", true, false, false, L"bad_args"};
+        SetStr(b, "query", Trim(rest));
+        if (ArgStr(a, "path").empty()) {
+            SetStr(b, "path", folder);
+            note += L"(\"path:\" in the query was taken as path.)\n";
+        } else {
+            note += L"(\"path:\" in the query was left out: path is given.)\n";
+        }
+    }
+    if (!unknown.empty())
+        note += L"(" + unknown + L" in the query " + (unknown.find(L',') == std::wstring::npos ? L"isn't a filter" : L"aren't filters") +
+                L" (those are ext: and type:; give a folder as path): it was looked for in the names as typed.)\n";
+    ToolOut o = FindCore(b, rows);
+    if (!rows && !o.error) o.text = note + o.text;
+    return o;
+}
+
+// grep with globs that are all names (*.gradle, Cargo.toml, capacitor.config.*): the files that have them, from the
+// drive index, so the folder isn't walked to find them. On a 1 TB hard disk the walk stopped at a 30 s budget after
+// 282 files; the index names them at once. Left out as a walk leaves them out: what .gitignore leaves out, dependency
+// and cache folders, private places. nullptr when the index can't say: a folder it hasn't got, a drive where names
+// made since it were let go, a glob on the path, or a folder inside a dependency folder (walked as it always was).
+std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q) {
+    // only where the watchers keep the index current: on its own (seek --cli), it doesn't know what was made since
+    if (q.include.empty() || !g_watching || q.root.size() < 3 || q.root[1] != L':') return nullptr;
+    for (const std::wstring& g : q.include)
+        if (g.find(L'\\') != std::wstring::npos) return nullptr;
+    // right after a start the indexes take about a second to load, and the journals to be read: worth it, a walk isn't
+    if (!WaitIndex(5000)) return nullptr;
+    WaitCatchUp(10000);
+    const wchar_t letter = static_cast<wchar_t>(towupper(q.root[0]));
+    const std::wstring rootKey = Key(q.root);
+    const std::vector<std::wstring> junkList(JunkDirs().begin(), JunkDirs().end());
+    if (LetGo(letter) || (!q.ignored && AnySegment(rootKey, junkList))) return nullptr;
+    const auto vols = Volumes();
+    for (uint32_t vi = 0; vi < vols.size(); ++vi) {
+        const Volume& v = *vols[vi];
+        uint32_t root;
+        if (v.letter != letter || !FindNode(v, q.root, root) || !v.node[root].dir) continue;
+        IgnoreMap im;
+        if (!q.ignored) im = MakeIgnoreMap(v, vi, root, q.root);
+        const size_t relAt = rootKey.size() + (rootKey.back() == L'\\' ? 0 : 1);
+        auto out = std::make_shared<std::vector<std::wstring>>();
+        auto take = [&](const std::wstring& path, const std::wstring& nameKey) {
+            const std::wstring key = Key(path);
+            if (Private(key) || Removed(key) || !GlobsPass(q, nameKey, key.substr(std::min(key.size(), relAt)))) return;
+            out->push_back(path);
+        };
+        std::vector<uint32_t> stack{root};
+        while (!stack.empty()) {
+            const uint32_t x = stack.back();
+            stack.pop_back();
+            for (uint32_t k = v.kidStart[x]; k < v.kidStart[x + 1]; ++k) {
+                const uint32_t c = v.kids[k];
+                const IdxNode& nd = v.node[c];
+                if (nd.dir) {
+                    if (q.ignored || im.chainOf.count(c)) stack.push_back(c);
+                    continue;
+                }
+                const std::wstring nameKey = Lower(std::wstring(v.name + nd.nameOff, nd.nameLen));
+                bool named = false;  // the include globs first: they leave out nearly every name, without making its path
+                for (const std::wstring& g : q.include) named = named || GlobMatch(g.c_str(), nameKey.c_str());
+                if (!named || (!q.ignored && im.Hides(v, c))) continue;
+                take(NodePath(v, c), nameKey);
+            }
+        }
+        // made since the index was taken
+        RepoIgnore oneByOne;
+        std::vector<std::wstring> since;
+        {
+            std::lock_guard lk(g_actM);
+            for (const auto& [k, x] : g_added)
+                if (!x.dir && IsUnder(k, rootKey) && k.size() > rootKey.size()) since.push_back(x.path);
+        }
+        for (const std::wstring& p : since) {
+            const std::wstring key = Key(p);
+            if (!q.ignored && (AnySegment(key.substr(rootKey.size()), junkList) || oneByOne.Check(p, false))) continue;
+            take(p, Lower(LeafOf(p)));
+        }
+        std::sort(out->begin(), out->end(), [](const std::wstring& a, const std::wstring& b) { return WalkBefore(a, b); });
+        out->erase(std::unique(out->begin(), out->end(), [](const std::wstring& a, const std::wstring& b) { return Key(a) == Key(b); }), out->end());
+        return out;
+    }
+    return nullptr;
+}
+
 // rows: for a program that lists the matches itself (the pipe's __grep_rows): a line "#rows", the files with matches,
 // the matching lines, 1 when not all of them are listed, and how it searched (asked, nocase, regex); then one line per
 // match: the path, the line, the column and the line's text (a long one around the match), tab-separated.
@@ -728,6 +896,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
     const bool isFile = !(GetFileAttributesW(LongPath(q.root).c_str()) & FILE_ATTRIBUTE_DIRECTORY);
     const std::wstring base = isFile ? ParentOf(q.root) : q.root;
 
+    if (!isFile) q.picked = IndexPick(q);
     GrepResult r = RunGrep(q);
     if (!r.error.empty()) return {r.error, true, false, false, L"bad_args"};  // a regex that doesn't parse, mostly
     std::wstring note, how = L"asked";
@@ -783,7 +952,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
     std::wstring head = L"grep \"" + q.pattern + L"\"" + (q.without.empty() ? L"" : L" without \"" + q.without + L"\"") + L" in " + q.root + L": " + Thousands(lines) +
                         (lines == 1 ? L" matching line" : L" matching lines") +
                         L" in " + Thousands(r.files.size()) + (r.files.size() == 1 ? L" file" : L" files") + L" (searched " + Thousands(r.searched) +
-                        (r.searched == 1 ? L" file" : L" files") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
+                        (r.searched == 1 ? L" file" : L" files") + (r.picked ? L" named like the globs, from the index" : L"") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
                         L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" +
                         (r.fromMemory ? L", read from Seek's memory, not the drive"
                          : ms > 1000 && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"

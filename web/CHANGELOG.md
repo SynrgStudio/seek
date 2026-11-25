@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-25, Seek 0.8.1
+
+- `project.version` is 0.8.1.
+- `notes/grep.md`: a first step, **The files**: when every glob is a name, the files come from the index instead of a walk.
+- `notes/tools.md`: the same in grep's `glob`; under find, `path:` in the query and WSL's files.
+
 ## 2026-11-24, Seek 0.8.0
 
 - `project.version` is 0.8.0.

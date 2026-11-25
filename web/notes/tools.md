@@ -1,7 +1,7 @@
 ---
 title: The three tools, and their query language
 status: stable
-updated: 2026-11-11
+updated: 2026-11-25
 ---
 
 All three are read-only. Each answer says why each result is there. A long answer is cut, with a note on how to see more.
@@ -18,6 +18,8 @@ On every fixed drive, or below `path`.
   - The answer says how many it left out, and `ignored: true` lists them.
   - When a name exists only in there, it is shown from there, saying so.
   - On every drive nothing is left out.
+- **In the query,** `path:C:\x` is taken as `path`; another `word:` isn't a filter, and the answer says so.
+- **WSL.** The Linux files of a WSL distro aren't on the drives. `path` can be `\\wsl.localhost\<distro>\home`, which is walked; an answer with nothing on every drive says so.
 
 The query:
 
@@ -65,7 +67,7 @@ In a folder, or in a single file.
   - `ignored: true` searches all of those too.
 - **The pattern.** Literal by default; `regex: true` makes it an ECMAScript regex. It ignores case unless the pattern has capitals.
 - **Shaping the answer.**
-  - `glob`, `context`, `limit`, `offset` and `summary`.
+  - `glob`, `context`, `limit`, `offset` and `summary`. When every glob is a name (`*.gradle`, `Cargo.toml`), the files come from the index instead of a walk, so even a whole drive answers in a moment.
   - `without` leaves out lines that also have some text.
   - `before` and `after` set each side of the context, up to 200 [grep_context_max] lines.
   - `block` shows the whole block a match opens, like a function's body.

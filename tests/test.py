@@ -787,6 +787,64 @@ check("people: step by step, each line changes the search",
       len(steps) == 9 and "2 found" in steps[1] and "  1  repo\\src\\engine.h" in steps[2] and "1 found" in steps[2]
       and "seek engine .h -p repo" in steps[3] and "2 found" in steps[4] and "Nothing found" in steps[5] and "2 found" in steps[6]
       and "recent 1h" in steps[7], out)
+
+# grep with globs that are all names: the files come from the index, not from a walk, and they are the same ones (a glob
+# on the path, which never matches, makes the same search walk; it goes last, since a walk keeps the folder in memory,
+# and memory answers before the index). A folder the index has: this repository. What is made in its build folder
+# (which .gitignore leaves out) comes from the watchers, and a hidden file is left out unless hidden is true.
+R = os.path.dirname(HERE)
+
+
+def grep_files(args, pattern="brown fox"):
+    r = pipe_call("0.0.0 test", "grep.rows", {"pattern": pattern, "path": R, **args})
+    return sorted({l.split("\t")[0].lower()[len(R) + 1:] for l in r.get("text", "").split("\n")[1:] if l}), r.get("text", "")
+
+
+if not CI:
+    fresh, hid = os.path.join(R, "build", "pick_fresh.cfg"), os.path.join(R, "build", "pick_hidden.cfg")
+    try:
+        for f in (fresh, hid):
+            open(f, "w").write("pick zebra\n")
+        subprocess.run(["attrib", "+h", hid], timeout=30)
+        for _ in range(50):  # the watchers see them a moment later
+            every, _ = grep_files({"glob": ["*.cfg"], "ignored": True, "hidden": True}, "pick zebra")
+            if len(every) >= 2:
+                break
+            time.sleep(0.2)
+        check("grep: name globs pick the files from the index and what was made since, hidden ones with hidden",
+              every == [r"build\pick_fresh.cfg", r"build\pick_hidden.cfg"], str(every))
+        some, _ = grep_files({"glob": ["*.cfg"], "ignored": True}, "pick zebra")
+        none, _ = grep_files({"glob": ["*.cfg"]}, "pick zebra")
+        check("grep: without hidden, not the hidden one; without ignored, nothing in an ignored folder", some == [r"build\pick_fresh.cfg"] and none == [], "%s %s" % (some, none))
+        code, out = cli("grep", {"pattern": "brown fox", "path": R, "glob": ["*.py", "*.inl"]}, via="--call")
+        check("grep: and the answer says so", "named like the globs, from the index" in out, out)
+        picked, _ = grep_files({"glob": ["*.py", "*.inl"]})
+        walked, _ = grep_files({"glob": ["*.py", "*.inl", r"never\there.x"]})
+        check("grep: the same files a walk finds", walked == picked and r"tests\test.py" in picked, "picked %s\nwalked %s" % (picked, walked))
+    finally:
+        subprocess.run(["attrib", "-h", hid], timeout=30)
+        for f in (fresh, hid):
+            if os.path.exists(f):
+                os.remove(f)
+
+# find: "path:" in the query is the folder; another "word:" isn't a filter, and the answer says so
+code, out = cli("find", {"query": "engine path:" + S + "\\repo\\src"}, via="--call")
+check("find: path: in the query is taken as path", "engine.cpp" in out and "taken as path" in out, out)
+code, out = cli("find", {"query": "engine name:x", "path": S}, via="--call")
+check("find: an unknown word: in the query is said not to be a filter", "\"name:\" in the query isn't a filter" in out, out)
+code, out = cli("find", {"query": "path:" + S}, via="--call")
+check("find: path: alone asks for a name", code == 1 and "add what to look for" in out, out)
+if not CI:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Lxss") as k:
+            distros = [winreg.QueryValueEx(winreg.OpenKey(k, winreg.EnumKey(k, i)), "DistributionName")[0] for i in range(winreg.QueryInfoKey(k)[0])]
+    except OSError:
+        distros = []
+    distros = [d for d in distros if not d.lower().startswith("docker-desktop")]
+    if distros:
+        code, out = cli("find", {"query": "qqzzvvxxnothing"}, via="--call")
+        check("find: nothing on every drive says WSL's files aren't on them, and how to look there", "\\\\wsl.localhost\\" + distros[0] in out, out)
 subprocess.run([EXE, "--stop"], timeout=60)  # the background process these started
 # ---- a watcher that loses every batch of changes (too many at once): what was made, renamed and deleted comes from the
 # drive's journal instead. An instance of its own, as the setting is read once.

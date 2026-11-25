@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- **`grep` with name globs takes the files from the index, instead of walking the folder.** With ten globs that are names (`*.gradle`, `*.kts`, `Cargo.toml`, `README.md`, …) on the root of a 1 TB hard disk full of project copies, the walk stopped at a 30 s budget after 282 files. Now when every glob is a name, the files that have them come from the drive index, with what the watchers saw made since: 535 files, all of them, in 0.3 s. They are left out as a walk leaves them out (`.gitignore`, dependency folders, hidden files, private places), and the answer says the files came from the index. A folder the index doesn't have, a glob on the path, or a drive where names were let go is walked as before.
+- **`find`: `path:C:\x` in the query is taken as the folder.** It was looked for as part of a name, and the answer was "Nothing named like …". Another `word:` that isn't a filter (`name:`, `dir:`) stays in the name, and the answer says it isn't one.
+- **`find` says where WSL's files are.** The Linux files of a WSL distro aren't on the drives Seek indexes. An answer with nothing on every drive now names the distros and the path to look there (`\\wsl.localhost\Ubuntu\home`, walked), and the `path` parameter says so. The distros are read from the registry, so WSL isn't started for it.
+
 ## 0.8.0
 
 - **A command line for people.** Until now a search from a terminal was `seek --cli find "{\"query\":\"report .pdf\"}"`. Now:
