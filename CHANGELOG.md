@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.7
+
+- **A folder searched with name globs is kept in memory afterwards, as a walked one is.** Since 0.8.1 a grep whose globs are all names (`*.rs`) takes its files from the index, but then the folder wasn't kept in memory, so every search read the files from the disk again. On a hard disk, with builds running, a grep for a literal in 360 `.rs` files of a repository took 10 to 20 s each time the system's cache had dropped them. Now the folder is kept in memory after that first search (unless it is a drive's root, or holds more than 100,000 names besides what is ignored): the next ones answer in milliseconds. A folder already kept doesn't go to the index first at all. The first search's answer says it read from a hard disk.
+
 ## 0.8.6
 
 - **`grep` reads 3MF files of any size.** 0.8.5 inflated each part whole and passed over a part bigger than 256 MB, saying "files over 16 MB weren't read": a 42 MB and a 223 MB project, detailed models, the ones likely to carry painting. Now a part is read from the disk and inflated a few MB at a time, and searched in pieces cut at a line's end, keeping only the 32 KB a later copy may reach back into: any size, in about 12 MB of memory. In the folder of the report, 7 parts and 125,478 matching lines, the same as Python's `zipfile`, where 0.8.5 found 3 parts. It is faster too: a folder with 2.8 GB of XML inside its projects took 8 s, now 5.

@@ -804,7 +804,7 @@ bool InPackage(const std::wstring& path) {
 // folder inside a dependency folder (walked as it always was). Where names made since the index were let go on that
 // drive, a small folder is walked (as find does), but a big one still comes from the index, and the answer says what
 // may be missing: walking a whole hard disk for the few names made in the last hours took the whole budget.
-std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q) {
+std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q, size_t* keptNames = nullptr) {
     // only where the watchers keep the index current: on its own (seek --cli), it doesn't know what was made since
     if (q.include.empty() || !g_watching || q.root.size() < 3 || q.root[1] != L':') return nullptr;
     for (const std::wstring& g : q.include)
@@ -842,6 +842,7 @@ std::shared_ptr<const std::vector<std::wstring>> IndexPick(const GrepQuery& q) {
                     if (q.ignored || im.chainOf.count(c)) stack.push_back(c);
                     continue;
                 }
+                if (keptNames) ++*keptNames;  // a name grep would search with no glob: what keeping the folder means
                 const std::wstring nameKey = Lower(std::wstring(v.name + nd.nameOff, nd.nameLen));
                 bool named = false;  // the include globs first: they leave out nearly every name, without making its path
                 for (const std::wstring& g : q.include) named = named || GlobMatch(g.c_str(), nameKey.c_str());
@@ -908,7 +909,14 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
     const bool isFile = !(GetFileAttributesW(LongPath(q.root).c_str()) & FILE_ATTRIBUTE_DIRECTORY);
     const std::wstring base = isFile ? ParentOf(q.root) : q.root;
 
-    if (!isFile) q.picked = IndexPick(q);
+    if (!isFile && (q.hidden || q.ignored || !CacheHas(q.root))) {  // kept in memory (which has neither): answered from there
+        // Picked from the index, a folder is still kept in memory afterwards when it is one a walk would keep (not a
+        // drive's root, and not too big): on a hard disk the first read of 360 files took 20 s with builds running,
+        // and their cache was soon gone again; the next searches come from memory instead.
+        size_t kept = 0;
+        q.picked = IndexPick(q, &kept);
+        q.keepAfter = q.picked && q.root.size() > 3 && kept <= 100000;
+    }
     GrepResult r = RunGrep(q);
     if (!r.error.empty()) return {r.error, true, false, false, L"bad_args"};  // a regex that doesn't parse, mostly
     std::wstring note, how = L"asked";
@@ -967,7 +975,8 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
                         (r.searched == 1 ? L" file" : L" files") + (r.picked ? L" named like the globs, from the index" : L"") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
                         L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" +
                         (r.fromMemory ? L", read from Seek's memory, not the drive"
-                         : ms > 1000 && !r.picked && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
+                         : ms > 1000 && (!r.picked || q.keepAfter) && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
+                         : ms > 1000 && HardDisk(q.root[0]) ? L", read from a hard disk"
                                                                          : L"") +
                         L").\n";
     std::wstring tail;

@@ -802,6 +802,7 @@ struct GrepQuery {
     // The files to search, picked from the drive index by name (globs that are all names: *.gradle, Cargo.toml): then
     // the folder isn't walked. A whole hard disk took minutes to walk for a few hundred files the index names at once.
     std::shared_ptr<const std::vector<std::wstring>> picked;
+    bool keepAfter = false;  // picked, and small enough to keep in memory afterwards, as a walked folder is
 };
 
 constexpr size_t kNamedSkips = 5;  // how many of the files passed over are named in the answer
@@ -1612,6 +1613,6 @@ GrepResult RunGrep(const GrepQuery& q) {
     res.binaries = binaries;
     res.unreadable = unreadable;
     res.timedOut = !done;
-    if (done && !q.picked && ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_DIRECTORY)) CacheAfterWalk(q, textBytes);
+    if (done && (!q.picked || q.keepAfter) && ra != INVALID_FILE_ATTRIBUTES && (ra & FILE_ATTRIBUTE_DIRECTORY)) CacheAfterWalk(q, textBytes);
     return res;
 }

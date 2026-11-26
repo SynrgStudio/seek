@@ -851,11 +851,19 @@ if not CI:
         check("grep: name globs pick the files from the index and what was made since, hidden ones with hidden",
               every == [r"build\pick_fresh.cfg", r"build\pick_hidden.cfg"], str(every))
         some, _ = grep_files({"glob": ["*.cfg"], "ignored": True}, "pick zebra")
-        none, _ = grep_files({"glob": ["*.cfg"]}, "pick zebra")
-        check("grep: without hidden, not the hidden one; without ignored, nothing in an ignored folder", some == [r"build\pick_fresh.cfg"] and none == [], "%s %s" % (some, none))
+        check("grep: without hidden, not the hidden one", some == [r"build\pick_fresh.cfg"], str(some))
+        # the first search without ignored: picked from the index, and then the folder is kept in memory, as a walk keeps it
         code, out = cli("grep", {"pattern": "brown fox", "path": R, "glob": ["*.py", "*.inl"]}, via="--call")
         check("grep: and the answer says so", "named like the globs, from the index" in out, out)
         picked, _ = grep_files({"glob": ["*.py", "*.inl"]})
+        for _ in range(100):
+            code, out = cli("grep", {"pattern": "brown fox", "path": R, "glob": ["*.py", "*.inl"]}, via="--call")
+            if "from Seek's memory" in out:
+                break
+            time.sleep(0.2)
+        check("grep: after a search picked from the index, the folder is kept in memory", "from Seek's memory" in out, out)
+        none, _ = grep_files({"glob": ["*.cfg"]}, "pick zebra")
+        check("grep: without ignored, nothing in an ignored folder", none == [], str(none))
         walked, _ = grep_files({"glob": ["*.py", "*.inl", r"never\there.x"]})
         check("grep: the same files a walk finds", walked == picked and r"tests\test.py" in picked, "picked %s\nwalked %s" % (picked, walked))
     finally:

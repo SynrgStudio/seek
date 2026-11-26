@@ -364,6 +364,16 @@ bool CacheApply(const std::shared_ptr<KeptFolder>& f) {
 }
 
 // A search answered from memory, when the folder is kept and the search follows the default rules.
+// Is the folder kept in memory, read in already? Then a search there doesn't need the index to pick its files.
+bool CacheHas(const std::wstring& root) {
+    if (!g_watching || !CacheBudget()) return false;
+    const std::wstring key = Key(root);
+    std::lock_guard lk(g_cacheM);
+    for (const auto& x : g_folders)
+        if (x->ready && (key == x->rootKey || IsUnder(key, x->rootKey))) return true;
+    return false;
+}
+
 std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const BytePre& pre) {
     if (q.hidden || q.ignored || !g_watching) return std::nullopt;
     // one file: read it, rather than bring the whole kept folder up to date first
