@@ -3,7 +3,7 @@
 
 [project]
 name = "Seek"
-version = "0.8.6"
+version = "0.8.7"
 released = 2026-11-26
 license = "GPL-3.0"
 platforms = ["Windows 10", "Windows 11"]
