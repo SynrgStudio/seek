@@ -628,6 +628,13 @@ what = "how far back recent looks when no span is given"
 source = "src/tools.inl"
 date = 2026-11-26
 
+[facts.grep_3mf_memory_mb]
+value = 12
+unit = "MB"
+what = "memory grep takes to read a 3MF part of any size: the inflated text handed on in pieces, plus the compressed bytes read in pieces"
+source = "src/grep.inl"
+date = 2026-11-26
+
 [facts.ranked_results]
 value = 2000
 unit = "results"

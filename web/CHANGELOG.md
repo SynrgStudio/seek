@@ -1,5 +1,9 @@
 # What changed in Seek's corpus
 
+## 2026-11-26, the memory a 3MF takes
+
+- New fact, read from the source: `grep_3mf_memory_mb` (12): the inflated text's pieces plus the compressed bytes' pieces. `notes/grep.md` cites it in **3MF files**.
+
 ## 2026-11-26, Seek 0.8.6
 
 - `project.version` is 0.8.6.

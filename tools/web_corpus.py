@@ -233,6 +233,8 @@ fact("cli_recent_terminal", code("src/human.inl", TERM, 2), "results", "recent c
 fact("cli_pipe", code("src/human.inl", PIPE, 2), "results", "names or recent changes the command line prints into a pipe, unless -n says otherwise", "src/human.inl", None)
 fact("cli_pipe_text", code("src/human.inl", PIPE, 1), "lines", "lines of text (seek g) the command line prints into a pipe, unless -n says otherwise", "src/human.inl", None)
 fact("recent_default_days", code("src/tools.inl", r'ParseSpan\(ArgStr\(a, "since"\), (\d+) \* kDay\)'), "days", "how far back recent looks when no span is given", "src/tools.inl", None)
+fact("grep_3mf_memory_mb", code("src/grep.inl", r"kPiece = (\d+)u << 20") + code("src/grep.inl", r"std::min<uint64_t>\(left, (\d+)u << 20\)"), "MB",
+     "memory grep takes to read a 3MF part of any size: the inflated text handed on in pieces, plus the compressed bytes read in pieces", "src/grep.inl", None)
 fact("ranked_results", code("src/tools.inl", r"constexpr size_t kRanked = (\d+);"), "results", "the best names by name that find ranks again by what the user is doing, and pages through", "src/tools.inl", None)
 fact("jolt_check_min", code("src/server.inl", r"if \(tick % (\d+) == 0\)\s*\n\s*for \(wchar_t c : FixedDrives\(\)\) LoadVolume\(c, false\);"),
      "min", "how often Seek looks for a newer copy of Jolt's index (and of its own)", "src/server.inl", None)
