@@ -635,6 +635,13 @@ what = "memory grep takes to read a 3MF part of any size: the inflated text hand
 source = "src/grep.inl"
 date = 2026-11-26
 
+[facts.grep_keep_names_max]
+value = 100000
+unit = "names"
+what = "after a grep with name globs, a folder with up to this many names (besides what is ignored) is kept in memory"
+source = "src/tools.inl"
+date = 2026-11-26
+
 [facts.ranked_results]
 value = 2000
 unit = "results"

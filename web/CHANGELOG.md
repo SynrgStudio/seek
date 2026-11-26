@@ -4,6 +4,7 @@
 
 - `project.version` is 0.8.7.
 - `notes/grep.md`, **The files**: after a search with name globs, the folder is kept in memory as a walked one is, unless it is a drive's root or holds more than 100,000 names.
+- New fact, read from the source: `grep_keep_names_max` (100,000), cited there.
 
 ## 2026-11-26, the memory a 3MF takes
 
