@@ -1,7 +1,7 @@
 ---
 title: How grep reads a folder
 status: stable
-updated: 2026-11-25
+updated: 2026-11-26
 ---
 
 1. **The files.** When every `glob` is a name (`*.gradle`, `Cargo.toml`, `capacitor.config.*`), the files come from the drive index, with what the watchers saw made since, instead of a walk: a whole drive's few hundred matching names in milliseconds. They are left out as a walk leaves them out (`.gitignore`, dependency folders, hidden files, private places). A folder the index doesn't have, or a glob on the path, is walked. On a drive where names made since the index were let go (more changes than are kept), a small folder is walked, and a big one still comes from the index, with a note that a file made since may be missing.
@@ -16,6 +16,7 @@ updated: 2026-11-25
    - The search starts at the pattern's rarest character, with `memchr`, and compares around it, folding case on the fly when needed. Most files end here.
 4. **The text.** Only a file that may match is decoded: from UTF-16 by its mark, from UTF-8, or from the system code page. Then each matching line gets its line number, its column, and its context.
 5. **Documents** go through the text filter Windows has for their type. The PDF filter that comes with Windows only accepts a stream, which the classic `LoadIFilter` can't give it, so Seek creates the filter itself and hands it one.
+6. **3MF files** are zips of XML, and Windows has no text filter for them, nor for the deflate inside: Seek reads the zip itself (ZIP64 too) and inflates only the text parts, not the thumbnails. A mesh can be hundreds of MB of XML: it is searched a few MB at a time, each piece first looked at as bytes, and only one part that big is inflated at a time.
 
 **Limits of the reading:**
 

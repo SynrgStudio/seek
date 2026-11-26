@@ -1,5 +1,11 @@
 # What changed in Seek's corpus
 
+## 2026-11-26, Seek 0.8.5
+
+- `project.version` is 0.8.5.
+- `notes/grep.md`: a sixth step, **3MF files**: read as zips, ZIP64 too, only their text parts inflated, a big mesh searched a few MB at a time.
+- `notes/tools.md`: grep reads inside 3MF files, and how a match's path looks. `notes/cli.md`: the same in one phrase.
+
 ## 2026-11-25, Seek 0.8.4
 
 - `project.version` is 0.8.4. The notes don't change.

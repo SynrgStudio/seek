@@ -740,7 +740,9 @@ void Show(const Ask& a, Page& pg, size_t from, bool stepping) {
 void Opened(const std::wstring& path) { AskSeek("opened", "{\"path\":" + JsonQuote(Utf8(path)) + "}"); }
 
 // Opens a file with what Windows opens it with; with SEEK_EDITOR set (code -g {path}:{line}), with that.
-void OpenPath(const Shown& s) {
+void OpenPath(const Shown& given) {
+    Shown s = given;  // a part inside a package (model.3mf\3D\...) opens the package
+    while (GetFileAttributesW(s.path.c_str()) == INVALID_FILE_ATTRIBUTES && ParentOf(s.path).size() > 3) s.path = ParentOf(s.path);
     const std::wstring editor = EnvText(L"SEEK_EDITOR");
     if (!editor.empty() && !(GetFileAttributesW(s.path.c_str()) & FILE_ATTRIBUTE_DIRECTORY)) {
         std::wstring cmd = editor;

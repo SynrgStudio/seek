@@ -5,7 +5,7 @@
 // budget: "cache = 512" in seek.txt is the default, in MB; 0 turns it off. A folder nobody searched for 20 minutes is
 // let go.
 
-enum : uint8_t { kcText, kcBinary, kcBinaryExt, kcBig, kcFail, kcDoc, kcNoFilter };
+enum : uint8_t { kcText, kcBinary, kcBinaryExt, kcBig, kcFail, kcDoc, kcNoFilter, kcPackage };  // a package: read at each search, not kept
 
 struct CFile {
     std::wstring path, nameKey;
@@ -52,6 +52,10 @@ void LoadCFile(CFile& c, const WalkFile& w) {
     c.size = w.size;
     if (w.binaryExt) {
         c.kind = kcBinaryExt;
+        return;
+    }
+    if (PackageExts().count(ExtOf(w.nameKey))) {  // a 3MF's meshes, inflated, would be far more than its size
+        c.kind = kcPackage;
         return;
     }
     if (w.doc) {
@@ -412,6 +416,20 @@ std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const
             switch (c.kind) {
                 case kcBinary:
                 case kcBinaryExt: ++binaries; continue;
+                case kcPackage: {
+                    std::vector<FileHits> parts;
+                    int tooBig = 0;
+                    const bool read = SearchPackage(c.path, m, pre, q.perFile, q.context, GetTickCount64() + q.budgetMs, parts, tooBig);
+                    ++searched;
+                    ++docs;
+                    std::lock_guard lk(fm);
+                    if (!read) {
+                        ++unreadable;
+                        if (res.unreadableFiles.size() < kNamedSkips) res.unreadableFiles.push_back(c.path);
+                    }
+                    for (FileHits& h : parts) res.files.push_back(std::move(h));
+                    continue;
+                }
                 case kcBig:
                 case kcFail: {  // passed over: the answer says so
                     if (c.kind == kcBig) ++big;

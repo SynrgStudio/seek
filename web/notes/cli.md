@@ -53,7 +53,7 @@ seek g "fn \w+_test" -x          a regex
 ```
 
 - **Case.** It ignores case unless the text has capitals. `-i` ignores it always, `-c` matches it exactly.
-- **What it reads, and skips,** is what grep reads for agents (`tools.md`): code and text in any encoding, PDF and Office documents, `.gitignore` followed, binaries and files over 16 MB [grep_file_max_mb] skipped. `-a` also searches what `.gitignore` leaves out, dependency folders and hidden files.
+- **What it reads, and skips,** is what grep reads for agents (`tools.md`): code and text in any encoding, PDF and Office documents, the XML inside 3MF files, `.gitignore` followed, binaries and files over 16 MB [grep_file_max_mb] skipped. `-a` also searches what `.gitignore` leaves out, dependency folders and hidden files.
 - **Globs that are names** (`-g *.gradle`, `-g Cargo.toml`) take the files from the index, so even a whole drive answers in a moment (`grep.md`).
 - **When nothing matches** in the exact case, it tries ignoring case, and says so; not with `-c`. A literal text with regex signs that finds nothing is tried as a regex, and says so.
 

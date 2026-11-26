@@ -1,7 +1,7 @@
 ---
 title: The three tools, and their query language
 status: stable
-updated: 2026-11-25
+updated: 2026-11-26
 ---
 
 All three are read-only. Each answer says why each result is there. A long answer is cut, with a note on how to see more.
@@ -59,7 +59,7 @@ By drive:  D: 3,958  E: 3,973  C: 269
 
 In a folder, or in a single file.
 
-- **What it reads.** Code and text in UTF-8, UTF-16 or the system code page. Documents through the text filters Windows has: PDF and RTF filters come with Windows; Word and Excel need Office or its filter pack.
+- **What it reads.** Code and text in UTF-8, UTF-16 or the system code page. Documents through the text filters Windows has: PDF and RTF filters come with Windows; Word and Excel need Office or its filter pack. Inside a 3MF (a 3D printing project, a zip of XML), the text parts: meshes, settings, metadata; a match's path is the file's and then the part's (`model.3mf\3D\3dmodel.model`), with the part's own line numbers.
 - **What it skips.**
   - It follows `.gitignore`, `.git\info\exclude`, the user's global excludes and `.ignore`.
   - It skips dependency folders, binaries, files only in the cloud, and files over 16 MB [grep_file_max_mb]. The answer names the big files it skipped.

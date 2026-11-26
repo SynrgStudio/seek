@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5
+
+- **`grep` reads inside 3MF files.** A 3MF (a 3D printing project, Bambu Studio's and PrusaSlicer's) is a zip of XML parts, like an Office file, but Windows has no text filter for it, so an attribute such as `paint_supports=` in 1,400 projects found nothing, and the agent wrote a script to open each zip. Now grep reads the zip itself, ZIP64 included, and inflates only the text parts (meshes, settings, metadata; not the thumbnails). A match's path is the file's and then the part's (`model.3mf\3D\Objects\object_1.model`), with that part's own line numbers. Checked against Python's `zipfile` on 600 projects here: the same lines, to the last one. A mesh can be hundreds of MB of XML: it is searched a few MB at a time, and only one part that big is inflated at a time. Folders kept in memory don't keep 3MF text: it is read at each search.
+- **`recent` on every drive, asked further back than Seek has watched,** says first that a folder given as `path` has its dates read from disk. It was said at the end of the answer, and easy to miss.
+
 ## 0.8.4
 
 - **A `grep` that finds nothing no longer spends seconds suggesting names.** When the text could be a file's name, grep suggests names like it below the folder. On a drive where names made since the index were let go, that suggestion walked the folder for up to 4 s, and more than once, so a grep that searched 535 files in 0.2 s answered after 16 s. The suggestion now comes from the index only.

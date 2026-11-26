@@ -781,6 +781,26 @@ code, out = human("g", "quick brown", "repo", "--color", "always")
 check("people: grep's match lit", "\x1b[1;31mquick brown\x1b[0m" in out and "1 line in 1 file" in out, out)
 code, out = human("g", "QUICK", "repo", "-c")
 check("people: grep -c, this case only", code == 1 and out == "", out)
+
+# grep inside a 3MF: a zip of XML parts, deflated (and one written as ZIP64, as slicers do); a thumbnail isn't read
+os.makedirs(os.path.join(ROOT, "pkg"), exist_ok=True)
+tris = "\n".join('<triangle v1="%d" v2="%d" v3="%d"%s/>' % (i, i + 1, i + 2, ' paint_supports="4"' if i == 700 else "") for i in range(3000))
+for name, z64 in (("bracket.3mf", False), ("wide64.3mf", True)):
+    with zipfile.ZipFile(os.path.join(ROOT, "pkg", name), "w", zipfile.ZIP_DEFLATED) as z:
+        with z.open("3D/3dmodel.model", "w", force_zip64=z64) as f:
+            f.write(('<?xml version="1.0"?>\n<model>\n<triangles>\n' + tris + "\n</triangles>\n</model>\n").encode())
+        z.writestr("Metadata/model_settings.config", '<config>\n<metadata key="name" value="qzbracket"/>\n</config>\n')
+        z.writestr("Metadata/plate_1.png", b"\x89PNG paint_supports in a thumbnail", compress_type=zipfile.ZIP_STORED)
+code, out = cli("grep", {"pattern": "paint_supports", "path": os.path.join(ROOT, "pkg"), "context": 0})
+check("grep: inside a 3MF's parts, deflated and ZIP64, with the part's own line numbers",
+      "bracket.3mf\\3D\\3dmodel.model" in out and "wide64.3mf\\3D\\3dmodel.model" in out and out.count('704: <triangle v1="700"') == 2
+      and "plate_1.png" not in out and "inside the package" in out, out)
+code, out = cli("grep", {"pattern": "qzbracket", "path": os.path.join(ROOT, "pkg")})
+check("grep: and its settings", "bracket.3mf\\Metadata\\model_settings.config" in out, out)
+
+# recent on every drive, further back than Seek has watched: the answer says first how to reach the rest
+code, out = cli("recent", {"query": "qqzzvvxxnothing", "since": "26w"}, via="--call")
+check("recent: asked before Seek watched, it says to give a folder as path", "Seek has watched the drives since" in out and "give a folder as path" in out, out)
 code, out = human("qqzzxxkkvv", "-p", "repo")
 check("people: nothing found, exit code 1 and nothing printed", code == 1 and out == "", out)
 code, out = human("engine", "-zz")
@@ -913,7 +933,12 @@ if not CI:
     t = pipe_call("0.0.0 test", "find", {"query": "keep_me_qz"}).get("text", "")
     check("since: then the oldest, and an answer with nothing says names were let go", t.startswith("Nothing named like") and "were let go" in t, t)
     # grep with name globs below a big folder still takes the files from the index, and says what may be missing
-    # (a text that could be a name: grep then suggests names like it, from the index only, without a walk of seconds)
+    # (a text that could be a name: grep then suggests names like it, from the index only, without a walk of seconds;
+    # timed once the start has read the drives' journals, which a search waits for)
+    for _ in range(120):
+        if "Catching up" not in subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace"):
+            break
+        time.sleep(0.5)
     t0 = time.time()
     t = pipe_call("0.0.0 test", "grep", {"pattern": "qzqznever", "path": os.environ["SystemRoot"], "glob": "*.qzqznone"}).get("text", "")
     took = time.time() - t0

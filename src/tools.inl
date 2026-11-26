@@ -789,6 +789,14 @@ ToolOut ToolFind(const Json& a, size_t rows) {
     return o;
 }
 
+// Is a match's path a part inside a package (model.3mf, then the part)?
+bool InPackage(const std::wstring& path) {
+    const std::wstring k = Key(path);
+    for (const std::wstring& e : PackageExts())
+        if (k.find(e + L"\\") != std::wstring::npos) return true;
+    return false;
+}
+
 // grep with globs that are all names (*.gradle, Cargo.toml, capacitor.config.*): the files that have them, from the
 // drive index, so the folder isn't walked to find them. On a 1 TB hard disk the walk stopped at a 30 s budget after
 // 282 files; the index names them at once. Left out as a walk leaves them out: what .gitignore leaves out, dependency
@@ -1040,7 +1048,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
         std::stable_sort(v.begin(), v.end(), [](const FileHits* x, const FileHits* y) { return x->matches > y->matches; });
         std::wstring out = note + head + L"Most matches:\n";
         for (size_t i = 0; i < v.size() && i < 40; ++i)
-            out += L"  " + std::to_wstring(v[i]->matches) + L"  " + Relative(v[i]->path, base) + (v[i]->doc ? L"  (document)" : L"") + L"\n";
+            out += L"  " + std::to_wstring(v[i]->matches) + L"  " + Relative(v[i]->path, base) + (v[i]->doc ? (InPackage(v[i]->path) ? L"  (inside the package)" : L"  (document)") : L"") + L"\n";
         if (v.size() > 40) out += L"  … and " + Thousands(v.size() - 40) + L" more files\n";
         return {out + tail, false, false, r.timedOut};
     }
@@ -1079,7 +1087,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
         }
         if (!block.empty()) {
             std::wstring title = Relative(f.path, base);
-            if (f.doc) title += L"  (text taken from the document)";
+            if (f.doc) title += InPackage(f.path) ? L"  (a text part inside the package)" : L"  (text taken from the document)";
             if (f.matches > static_cast<int>(f.lines.size())) title += L"  (" + std::to_wstring(f.matches) + L" matching lines, " + std::to_wstring(f.lines.size()) + L" shown; per_file for more)";
             body += title + L"\n" + block;
         }
@@ -1222,12 +1230,16 @@ ToolOut ToolRecent(const Json& a, bool rows = false) {
                         (query.empty() ? L"" : L", names like \"" + query + L"\"") + L", since " + Ago(from) + L", newest first";
     std::wstring notes = L"(Changes seen live since " + DateText(since) + L"; folders opened in Jolt";
     notes += walked ? L"; dates read from disk" + std::wstring(walkCut ? L" for part of the folder, it is big" : L"") + L")" : L")";
+    // asked further back than Seek has watched, on every drive: the way to the rest said first, where it isn't missed
+    const bool older = scope.empty() && from < since;
+    const std::wstring before = L"Seek has watched the drives since " + DateText(since).substr(0, 10) +
+                                L": for what changed before that, give a folder as path, and its dates are read from disk.\n";
     if (!shown)
-        return {head + L": nothing. " + notes + L"\n" +
-                (scope.empty() ? L"Seek knows what changed while it was running, and what the drives' change journals held when it started. Pass path to read dates from disk.\n" : L""),
+        return {head + L": nothing. " + (older ? before : L"") + notes + L"\n" +
+                (scope.empty() && !older ? L"Seek knows what changed while it was running, and what the drives' change journals held when it started. Pass path to read dates from disk.\n" : L""),
                 false, true, walkCut};
-    std::wstring tail;
-    if (v.size() > static_cast<size_t>(shown)) tail = L"(more: raise limit, narrow with query or path.)\n";
+    std::wstring tail = older ? L"(" + before.substr(0, before.size() - 1) + L")\n" : L"";
+    if (v.size() > static_cast<size_t>(shown)) tail += L"(more: raise limit, narrow with query or path.)\n";
     if (!system) tail += L"System places (AppData, Windows, Program Files, temp, caches) and what .gitignore leaves out are left out; include_system shows them.\n";
     return {head + L":\n" + list + notes + L"\n" + tail, false, false, walkCut};
 }

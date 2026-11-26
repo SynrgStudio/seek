@@ -27,7 +27,7 @@ Seek gives the agent three tools that answer those questions directly:
 | tool | what it does |
 |---|---|
 | **`find`** | Files and folders by name on every fixed drive, from an index, in milliseconds. Typo-tolerant, and ranked by what the user changed lately and the folders they use. `summary` gives counts by area instead of a list. |
-| **`grep`** | Text inside the files of a folder, and inside its PDF and Office documents. Follows `.gitignore`. After a folder's first search, it is kept in memory and kept current by the drive watchers. |
+| **`grep`** | Text inside the files of a folder, and inside its PDF and Office documents and 3MF files. Follows `.gitignore`. After a folder's first search, it is kept in memory and kept current by the drive watchers. |
 | **`recent`** | What the user created, changed and opened lately, without the logs and caches programs write all the time. |
 
 One background process serves every agent on the PC. It keeps the index, watches the drives, and remembers what changed. Seek only reads, never looks in private places such as keys, browser profiles or password managers, and logs every call for the user to see.
