@@ -383,34 +383,72 @@ const std::unordered_set<std::wstring>& PackageExts() {
     return s;
 }
 
-constexpr uint64_t kPartMax = 256ull << 20;  // a part larger than this inflated (a huge mesh) is passed over
-
+// Inflates a part, a few MB at a time both ways: what goes in is read from the file as it is needed (more), and what
+// comes out is handed on (sink) in pieces that end at a line's end, keeping only the 32 KB a later copy may reach back
+// into. So a mesh of any size takes about 12 MB: 16 MB was the cap at first, and the projects with painting, the
+// detailed ones, are 20 to 300 MB.
 struct Inflate {
-    const uint8_t* in;
-    size_t n, pos = 0;
+    std::function<bool(const uint8_t*&, size_t&)> more;  // the next piece of the input; false: there is no more
+    std::function<void(const char*, size_t)> sink;
+    uint64_t deadline = UINT64_MAX;
+    bool late = false;  // the deadline came: what was handed on stands
+    const uint8_t* in = nullptr;
+    size_t n = 0, pos = 0;
     uint32_t buf = 0;
     int cnt = 0;
-    std::string& out;  // sized to the part's size beforehand: written by index, w bytes so far
-    size_t cap, w = 0;
+    std::string out;  // the history kept, then what wasn't handed on yet (from fresh)
+    size_t w = 0, fresh = 0;
+    uint64_t made = 0;  // bytes out so far: a copy can't reach further back
     bool bad = false;
+    static constexpr size_t kWindow = 32768, kPiece = 8u << 20;
     struct Huff {
         uint16_t count[16];
         uint16_t sym[288];
     };
-    Inflate(const uint8_t* i, size_t len, std::string& o, size_t c) : in(i), n(len), out(o), cap(c) { out.resize(c); }
+    Inflate() { out.resize(kPiece + kWindow); }
+    bool Byte(uint8_t& b) {
+        if (pos >= n) {
+            if (!more || !more(in, n) || n == 0) return false;
+            pos = 0;
+        }
+        b = in[pos++];
+        return true;
+    }
     int Bits(int need) {
         while (cnt < need) {
-            if (pos >= n) {
+            uint8_t b;
+            if (!Byte(b)) {
                 bad = true;
                 return 0;
             }
-            buf |= static_cast<uint32_t>(in[pos++]) << cnt;
+            buf |= static_cast<uint32_t>(b) << cnt;
             cnt += 8;
         }
         const int v = static_cast<int>(buf & ((1u << need) - 1));
         buf >>= need;
         cnt -= need;
         return v;
+    }
+    // Hands on what is new, up to the last line's end (all of it when it is the last, or holds no line's end), and keeps
+    // the 32 KB before w and the line begun.
+    void Hand(bool last) {
+        size_t end = w;
+        if (!last) {
+            size_t k = w;
+            while (k > fresh && out[k - 1] != '\n') --k;
+            if (k > fresh) end = k;
+        }
+        if (end > fresh && sink) sink(out.data() + fresh, end - fresh);
+        const size_t keepFrom = std::min(end, w > kWindow ? w - kWindow : 0);
+        memmove(out.data(), out.data() + keepFrom, w - keepFrom);
+        fresh = end - keepFrom;
+        w -= keepFrom;
+        if (GetTickCount64() > deadline) late = bad = true;
+    }
+    void Put(char c) {
+        if (w == out.size()) Hand(false);
+        out[w++] = c;
+        ++made;
     }
     static bool Build(Huff& h, const uint8_t* len, int n) {
         memset(h.count, 0, sizeof(h.count));
@@ -451,8 +489,7 @@ struct Inflate {
             int sym = Decode(lens);
             if (sym < 0 || bad) return false;
             if (sym < 256) {
-                if (w >= cap) return false;
-                out[w++] = static_cast<char>(sym);
+                Put(static_cast<char>(sym));
                 continue;
             }
             if (sym == 256) return true;
@@ -462,35 +499,37 @@ struct Inflate {
             const int ds = Decode(dists);
             if (ds < 0 || ds >= 30) return false;
             const size_t dist = dbase[ds] + static_cast<size_t>(Bits(dext[ds]));
-            if (bad || dist > w || w + len > cap) return false;
-            char* o = out.data();
-            for (size_t k = 0; k < len; ++k, ++w) o[w] = o[w - dist];  // byte by byte: a copy may overlap itself
+            if (bad || dist > made) return false;
+            for (size_t k = 0; k < len; ++k) Put(out[w - dist]);  // one at a time: a copy may overlap itself; Hand keeps 32 KB
         }
     }
     bool Run() {
         Huff lens, dists;
-        for (int last = 0; !last;) {
+        bool ok = true;
+        for (int last = 0; !last && ok;) {
             last = Bits(1);
             const int type = Bits(2);
-            if (bad) return false;
-            if (type == 0) {  // stored
+            if (bad) {
+                ok = false;
+            } else if (type == 0) {  // stored
                 buf = 0;
                 cnt = 0;
-                if (pos + 4 > n) return false;
-                const size_t len = in[pos] | (in[pos + 1] << 8);
-                if ((len ^ 0xFFFF) != static_cast<size_t>(in[pos + 2] | (in[pos + 3] << 8))) return false;
-                pos += 4;
-                if (pos + len > n || w + len > cap) return false;
-                memcpy(out.data() + w, in + pos, len);
-                w += len;
-                pos += len;
+                uint8_t h[4];
+                for (uint8_t& b : h) ok = ok && Byte(b);
+                const size_t len = h[0] | (h[1] << 8);
+                ok = ok && (len ^ 0xFFFF) == static_cast<size_t>(h[2] | (h[3] << 8));
+                for (size_t k = 0; ok && k < len; ++k) {
+                    uint8_t b;
+                    ok = Byte(b);
+                    if (ok) Put(static_cast<char>(b));
+                }
             } else if (type == 1) {  // fixed codes
                 uint8_t l[288];
                 for (int i = 0; i < 288; ++i) l[i] = i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
                 Build(lens, l, 288);
                 for (int i = 0; i < 30; ++i) l[i] = 5;
                 Build(dists, l, 30);
-                if (!Codes(lens, dists)) return false;
+                ok = Codes(lens, dists);
             } else if (type == 2) {  // dynamic codes
                 const int nlen = Bits(5) + 257, ndist = Bits(5) + 1, ncode = Bits(4) + 4;
                 if (bad || nlen > 286 || ndist > 30) return false;
@@ -518,21 +557,31 @@ struct Inflate {
                     while (rep--) l[i++] = v;
                 }
                 if (!Build(lens, l, nlen) || !Build(dists, l + nlen, ndist)) return false;
-                if (!Codes(lens, dists)) return false;
+                ok = Codes(lens, dists);
             } else {
-                return false;
+                ok = false;
             }
         }
-        out.resize(w);
+        if (!late) Hand(true);  // the rest, also of a part damaged halfway: what came out of it is searched
+        return ok;
+    }
+    bool Copy(uint64_t len) {  // a stored part (no compression): through the same pieces
+        for (uint64_t k = 0; k < len; ++k) {
+            uint8_t b;
+            if (!Byte(b)) break;
+            Put(static_cast<char>(b));
+            if (late) return false;
+        }
+        if (!late) Hand(true);
         return true;
     }
 };
 
-// The text parts of a package, one at a time: onPart(name, bytes). Only those parts are read from the disk: not the
-// images and thumbnails. false: not a zip Seek can read (damaged, or ZIP64, past 4 GB). tooBig counts the parts
-// passed over for their size.
-template <class OnPart>
-bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, int& tooBig, OnPart&& onPart) {
+// The text parts of a package, one at a time: onBegin(name), then onText(bytes, n) for each piece (ending at a line's
+// end), then onEnd(). Only those parts are read from the disk, not the images and thumbnails, and a few MB at a time.
+// false: not a zip Seek can read.
+template <class OnBegin, class OnText, class OnEnd>
+bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, OnBegin&& onBegin, OnText&& onText, OnEnd&& onEnd) {
     HANDLE f = CreateFileW(LongPath(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return false;
     struct Closer {
@@ -540,22 +589,19 @@ bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, int& tooBig
         ~Closer() { CloseHandle(h); }
     } closer{f};
     LARGE_INTEGER size{};
-    if (!GetFileSizeEx(f, &size) || size.QuadPart < 22 || size.QuadPart >= (4ll << 30)) return false;
+    if (!GetFileSizeEx(f, &size) || size.QuadPart < 22) return false;
     const uint64_t n = static_cast<uint64_t>(size.QuadPart);
     auto readAt = [&](uint64_t at, size_t len, std::string& into) {  // false: past the end, or a read that failed
         if (at > n || len > n - at) return false;  // checked before the buffer is made: a bad size asked for 4 GB
         into.resize(len);
         OVERLAPPED o{};
-        o.Offset = static_cast<DWORD>(at);
-        o.OffsetHigh = static_cast<DWORD>(at >> 32);
         for (size_t done = 0; done < len;) {
+            const uint64_t from = at + done;
+            o.Offset = static_cast<DWORD>(from);
+            o.OffsetHigh = static_cast<DWORD>(from >> 32);
             DWORD got = 0;
-            const DWORD want = static_cast<DWORD>(std::min<size_t>(len - done, 64u << 20));
-            if (!ReadFile(f, into.data() + done, want, &got, &o) || got == 0) return false;
+            if (!ReadFile(f, into.data() + done, static_cast<DWORD>(std::min<size_t>(len - done, 64u << 20)), &got, &o) || got == 0) return false;
             done += got;
-            const uint64_t next = at + done;
-            o.Offset = static_cast<DWORD>(next);
-            o.OffsetHigh = static_cast<DWORD>(next >> 32);
         }
         return true;
     };
@@ -570,7 +616,7 @@ bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, int& tooBig
     while (end > 0 && u32(tail, end) != 0x06054b50) --end;
     if (u32(tail, end) != 0x06054b50) return false;
     uint64_t count = u16(tail, end + 10), dirLen = u32(tail, end + 12), dirAt = u32(tail, end + 16);
-    std::string dir, head, packed, data;
+    std::string dir, head, packed;
     // ZIP64 (slicers write it): the real counts in a record of its own, found by a locator just before the end record
     if ((count == 0xFFFF || dirLen == 0xFFFFFFFF || dirAt == 0xFFFFFFFF) && end >= 20 && u32(tail, end - 20) == 0x07064b50) {
         if (!readAt(u64(tail, end - 20 + 8), 56, head) || u32(head, 0) != 0x06064b50) return false;
@@ -580,7 +626,7 @@ bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, int& tooBig
     }
     if (dirLen > (256u << 20) || !readAt(dirAt, static_cast<size_t>(dirLen), dir)) return false;
     size_t at = 0;
-    for (size_t i = 0; i < count; ++i) {
+    for (uint64_t i = 0; i < count; ++i) {
         if (GetTickCount64() > deadline) return true;  // the caller's budget is over: what was read stands
         if (at + 46 > dir.size() || u32(dir, at) != 0x02014b50) return false;
         const uint32_t method = u16(dir, at + 10);
@@ -606,24 +652,27 @@ bool ForEachPackagePart(const std::wstring& path, uint64_t deadline, int& tooBig
         std::string ext = dot == std::string::npos ? "" : name.substr(dot);
         for (char& c : ext) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
         if (ext != ".model" && ext != ".config" && ext != ".xml" && ext != ".rels" && ext != ".json" && ext != ".txt") continue;
-        if (full > kPartMax) {
-            ++tooBig;
-            continue;
-        }
-        static std::mutex bigOne;  // a part this big inflated on every thread at once ran out of memory
-        std::unique_lock<std::mutex> one(bigOne, std::defer_lock);
-        if (full > (32u << 20)) one.lock();
-        if (!readAt(local, 30, head) || u32(head, 0) != 0x04034b50) continue;
-        if (!readAt(local + 30ull + u16(head, 26) + u16(head, 28), packedLen, packed)) continue;
-        if (method == 0) {
-            data.swap(packed);
-        } else if (method == 8) {
-            Inflate inf(reinterpret_cast<const uint8_t*>(packed.data()), packed.size(), data, full);
-            if (!inf.Run()) continue;
-        } else {
-            continue;
-        }
-        onPart(name, data);
+        if ((method != 0 && method != 8) || !readAt(local, 30, head) || u32(head, 0) != 0x04034b50) continue;
+        uint64_t from = local + 30ull + u16(head, 26) + u16(head, 28), left = packedLen;
+        if (from > n || left > n - from) continue;
+        Inflate inf;
+        inf.deadline = deadline;
+        inf.more = [&](const uint8_t*& p, size_t& got) {
+            if (!left) return false;
+            const size_t take = static_cast<size_t>(std::min<uint64_t>(left, 4u << 20));
+            if (!readAt(from, take, packed)) return false;
+            from += take;
+            left -= take;
+            p = reinterpret_cast<const uint8_t*>(packed.data());
+            got = take;
+            return true;
+        };
+        inf.sink = [&](const char* b, size_t len) { onText(b, len); };
+        onBegin(name);
+        if (method == 8) inf.Run();
+        else inf.Copy(full);
+        onEnd();
+        if (inf.late) return true;
     }
     return true;
 }
@@ -1104,39 +1153,37 @@ ReadOutcome StreamFile(const Matcher& m, const BytePre& pre, const std::wstring&
 }
 
 // A package's text parts, searched as files of their own: a match's path is the package's and then the part's
-// (model.3mf\3D\Objects\object_1.model), so its line numbers are the part's. false: it couldn't be read.
+// (model.3mf\3D\Objects\object_1.model), so its line numbers are the part's. A mesh is hundreds of MB of short lines:
+// it comes in pieces of a few MB, each first looked at as bytes; context doesn't cross from one piece to the next.
+// false: it couldn't be read.
 bool SearchPackage(const std::wstring& path, const Matcher& m, const BytePre& pre, int perFile, const Around& context, uint64_t deadline,
-                   std::vector<FileHits>& out, int& tooBig) {
+                   std::vector<FileHits>& out) {
     try {
         std::wstring text;
-        return ForEachPackagePart(path, deadline, tooBig, [&](const std::string& name, const std::string& data) {
-            FileHits fh;
-            std::wstring part = Wide(name);
-            std::replace(part.begin(), part.end(), L'/', L'\\');
-            fh.path = path + L"\\" + part;
-            fh.doc = true;
-            // A mesh is hundreds of MB of short lines: searched a few MB at a time, cut at a line's end, each piece
-            // first looked at as bytes. Context doesn't cross from one piece to the next.
-            int line = 1;
-            for (size_t at = 0; at < data.size();) {
-                size_t end = std::min(data.size(), at + (4u << 20));
-                if (end < data.size()) {
-                    const size_t eol = data.rfind('\n', end - 1);
-                    end = eol != std::string::npos && eol > at ? eol + 1 : end;
-                }
-                const char* b = data.data() + at;
-                const size_t len = end - at;
+        FileHits fh;
+        int line = 1;
+        return ForEachPackagePart(
+            path, deadline,
+            [&](const std::string& name) {
+                fh = FileHits{};
+                std::wstring part = Wide(name);
+                std::replace(part.begin(), part.end(), L'/', L'\\');
+                fh.path = path + L"\\" + part;
+                fh.doc = true;
+                line = 1;
+            },
+            [&](const char* b, size_t len) {
                 if (!pre.on || BytesMayMatch(pre, b, len)) {
                     DecodeMultiByte(b, len, text);
                     FindInText(m, text, fh, perFile, context, 0, std::wstring::npos, line);
                 }
                 line += static_cast<int>(std::count(b, b + len, '\n'));
-                at = end;
-            }
-            if (fh.matches) out.push_back(std::move(fh));
-        });
-    } catch (const std::exception& e) {  // out of memory with a huge mesh, mostly: that package is passed over, not the search
-        fwprintf(stderr, L"package %s: %hs\n", path.c_str(), e.what());
+            },
+            [&] {
+                if (fh.matches) out.push_back(std::move(fh));
+            });
+    } catch (const std::exception& e) {  // out of memory, mostly: that package is passed over, not the search
+        Audit(L"grep: " + path + L" couldn't be read: " + Wide(e.what()));
         return false;
     }
 }
@@ -1449,18 +1496,13 @@ GrepResult RunGrep(const GrepQuery& q) {
     auto searchFile = [&](const WalkFile& j) {
         if (PackageExts().count(ExtOf(j.nameKey))) {  // a 3MF: its text parts
             std::vector<FileHits> parts;
-            int tooBig = 0;
-            const bool read = SearchPackage(j.path, m, pre, q.perFile, q.context, deadline, parts, tooBig);
+            const bool read = SearchPackage(j.path, m, pre, q.perFile, q.context, deadline, parts);
             ++searched;
             ++docs;
             std::lock_guard lk(fm);
             if (!read) {
                 ++unreadable;
                 if (res.unreadableFiles.size() < kNamedSkips) res.unreadableFiles.push_back(j.path);
-            }
-            if (tooBig) {
-                ++big;
-                if (res.bigFiles.size() < kNamedSkips) res.bigFiles.push_back({j.path, j.size});
             }
             for (FileHits& f : parts) res.files.push_back(std::move(f));
             return;

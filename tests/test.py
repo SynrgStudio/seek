@@ -797,6 +797,15 @@ check("grep: inside a 3MF's parts, deflated and ZIP64, with the part's own line 
       and "plate_1.png" not in out and "inside the package" in out, out)
 code, out = cli("grep", {"pattern": "qzbracket", "path": os.path.join(ROOT, "pkg")})
 check("grep: and its settings", "bracket.3mf\\Metadata\\model_settings.config" in out, out)
+# a mesh bigger than the pieces it is inflated in (8 MB): matches at its start, across, and at its end, with their lines
+os.makedirs(os.path.join(ROOT, "pkgbig"), exist_ok=True)
+marks = (3, 151234, 389999)
+with zipfile.ZipFile(os.path.join(ROOT, "pkgbig", "detailed.3mf"), "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("3D/Objects/object_1.model", '<?xml version="1.0"?>\n<model>\n<triangles>\n' + "\n".join(
+        '<triangle v1="%d" v2="%d" v3="%d"%s/>' % (i, i + 1, i + 2, ' paint_supports="8"' if i in marks else "") for i in range(390000)) + "\n</triangles>\n</model>\n")
+code, out = cli("grep", {"pattern": "paint_supports", "path": os.path.join(ROOT, "pkgbig"), "context": 0, "time_budget_ms": 30000})
+check("grep: a mesh bigger than the pieces it is read in, every match with its line",
+      all('%d: <triangle v1="%d"' % (i + 4, i) in out for i in marks) and "3 matching lines" in out and "weren't read" not in out, out)
 
 # recent on every drive, further back than Seek has watched: the answer says first how to reach the rest
 code, out = cli("recent", {"query": "qqzzvvxxnothing", "since": "26w"}, via="--call")

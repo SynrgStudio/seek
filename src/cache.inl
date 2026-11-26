@@ -418,8 +418,7 @@ std::optional<GrepResult> CachedGrep(const GrepQuery& q, const Matcher& m, const
                 case kcBinaryExt: ++binaries; continue;
                 case kcPackage: {
                     std::vector<FileHits> parts;
-                    int tooBig = 0;
-                    const bool read = SearchPackage(c.path, m, pre, q.perFile, q.context, GetTickCount64() + q.budgetMs, parts, tooBig);
+                    const bool read = SearchPackage(c.path, m, pre, q.perFile, q.context, GetTickCount64() + q.budgetMs, parts);
                     ++searched;
                     ++docs;
                     std::lock_guard lk(fm);

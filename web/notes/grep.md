@@ -16,7 +16,7 @@ updated: 2026-11-26
    - The search starts at the pattern's rarest character, with `memchr`, and compares around it, folding case on the fly when needed. Most files end here.
 4. **The text.** Only a file that may match is decoded: from UTF-16 by its mark, from UTF-8, or from the system code page. Then each matching line gets its line number, its column, and its context.
 5. **Documents** go through the text filter Windows has for their type. The PDF filter that comes with Windows only accepts a stream, which the classic `LoadIFilter` can't give it, so Seek creates the filter itself and hands it one.
-6. **3MF files** are zips of XML, and Windows has no text filter for them, nor for the deflate inside: Seek reads the zip itself (ZIP64 too) and inflates only the text parts, not the thumbnails. A mesh can be hundreds of MB of XML: it is searched a few MB at a time, each piece first looked at as bytes, and only one part that big is inflated at a time.
+6. **3MF files** are zips of XML, and Windows has no text filter for them, nor for the deflate inside: Seek reads the zip itself (ZIP64 too) and inflates only the text parts, not the thumbnails. A mesh can be hundreds of MB of XML: it is read from the disk and inflated a few MB at a time, and searched in pieces that end at a line's end, each first looked at as bytes. So a 3MF of any size is read whole, in about 12 MB of memory.
 
 **Limits of the reading:**
 

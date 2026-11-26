@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.6
+
+- **`grep` reads 3MF files of any size.** 0.8.5 inflated each part whole and passed over a part bigger than 256 MB, saying "files over 16 MB weren't read": a 42 MB and a 223 MB project, detailed models, the ones likely to carry painting. Now a part is read from the disk and inflated a few MB at a time, and searched in pieces cut at a line's end, keeping only the 32 KB a later copy may reach back into: any size, in about 12 MB of memory. In the folder of the report, 7 parts and 125,478 matching lines, the same as Python's `zipfile`, where 0.8.5 found 3 parts. It is faster too: a folder with 2.8 GB of XML inside its projects took 8 s, now 5.
+
 ## 0.8.5
 
 - **`grep` reads inside 3MF files.** A 3MF (a 3D printing project, Bambu Studio's and PrusaSlicer's) is a zip of XML parts, like an Office file, but Windows has no text filter for it, so an attribute such as `paint_supports=` in 1,400 projects found nothing, and the agent wrote a script to open each zip. Now grep reads the zip itself, ZIP64 included, and inflates only the text parts (meshes, settings, metadata; not the thumbnails). A match's path is the file's and then the part's (`model.3mf\3D\Objects\object_1.model`), with that part's own line numbers. Checked against Python's `zipfile` on 600 projects here: the same lines, to the last one. A mesh can be hundreds of MB of XML: it is searched a few MB at a time, and only one part that big is inflated at a time. Folders kept in memory don't keep 3MF text: it is read at each search.

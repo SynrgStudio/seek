@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-26, Seek 0.8.6
+
+- `project.version` is 0.8.6.
+- `notes/grep.md`, **3MF files**: read and inflated a few MB at a time, so a 3MF of any size is read whole (it said only one big part was inflated at a time).
+
 ## 2026-11-26, Seek 0.8.5
 
 - `project.version` is 0.8.5.
