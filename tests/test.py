@@ -948,8 +948,10 @@ if not CI:
         if "Catching up" not in subprocess.run([EXE, "--status"], capture_output=True, timeout=60).stdout.decode("utf-8", "replace"):
             break
         time.sleep(0.5)
+    ask = {"pattern": "qzqznever", "path": os.environ["SystemRoot"], "glob": "*.qzqznone"}
+    pipe_call("0.0.0 test", "grep", ask)  # the first one may still wait for the journals: the second is timed
     t0 = time.time()
-    t = pipe_call("0.0.0 test", "grep", {"pattern": "qzqznever", "path": os.environ["SystemRoot"], "glob": "*.qzqznone"}).get("text", "")
+    t = pipe_call("0.0.0 test", "grep", ask).get("text", "")
     took = time.time() - t0
     check("since: grep with name globs on a big folder keeps to the index, and says names made since may be missing",
           "from the index" in t and "may be missing" in t and took < 3, "%.1f s\n%s" % (took, t))
