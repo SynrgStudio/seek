@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.8
+
+- **A `grep` cut by its time budget says where the rest is, and why.** A literal in a folder of 3,400 C++ files on a hard disk, read for the first time, stopped at the 6 s budget after 1,800 files without its match; the answer only suggested a glob. Reading those files cold took 42 s for Python too, and 0.3 s once Windows had them, so the disk was the cost, not the search. Now the answer:
+  - names the folders the walk didn't reach (two levels below the path, the fullest first);
+  - says, on a hard disk, that a first read is slow and a search again soon is faster;
+  - says, when `ignored: true` was given for a folder that is itself in what `.gitignore` leaves out, that it is searched without `ignored` too, and then kept in memory for the next searches (with `ignored`, it isn't kept): in that folder, 6 ms from the second search on.
+- The first search from a hard disk said "the next searches here come from memory"; it says now that the folder is being read into memory for them, which takes a few seconds.
+
 ## 0.8.7
 
 - **A folder searched with name globs is kept in memory afterwards, as a walked one is.** Since 0.8.1 a grep whose globs are all names (`*.rs`) takes its files from the index, but then the folder wasn't kept in memory, so every search read the files from the disk again. On a hard disk, with builds running, a grep for a literal in 360 `.rs` files of a repository took 10 to 20 s each time the system's cache had dropped them. Now the folder is kept in memory after that first search (unless it is a drive's root, or holds more than 100,000 names besides what is ignored): the next ones answer in milliseconds. A folder already kept doesn't go to the index first at all. The first search's answer says it read from a hard disk.

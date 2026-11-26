@@ -1,5 +1,10 @@
 # What changed in Seek's corpus
 
+## 2026-11-26, Seek 0.8.8
+
+- `project.version` is 0.8.8.
+- `notes/tools.md`, grep's **time budget**: an answer cut by it names the folders it didn't reach, and says when the time went to a first read from a hard disk.
+
 ## 2026-11-26, Seek 0.8.7
 
 - `project.version` is 0.8.7.

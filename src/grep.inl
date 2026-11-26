@@ -815,6 +815,7 @@ struct GrepResult {
     std::unordered_map<std::wstring, int> noFilter;  // documents without a text filter, by extension
     std::unordered_map<std::wstring, int> kinds;     // the files met that aren't binary, by extension: for a glob to suggest
     bool timedOut = false, fromMemory = false, picked = false;
+    std::vector<std::wstring> notReached;  // the time budget ended the walk: the folders of what was left
     std::wstring error;
 };
 
@@ -1229,7 +1230,7 @@ struct WalkFile {
 // each file, on the pool's threads, which have COM ready for document filters. false: stop or the deadline cut it short.
 template <class OnDir, class OnFile>
 bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bool inJunk, uint64_t deadline, const std::atomic<bool>& stop,
-                OnDir&& onDir, OnFile&& onFile) {
+                OnDir&& onDir, OnFile&& onFile, std::vector<std::wstring>* notReached = nullptr) {
     struct DirJob {
         std::wstring dir;
         IgnChain chain;
@@ -1315,8 +1316,13 @@ bool WalkFolder(const std::wstring& root, IgnChain chain, const GrepQuery& q, bo
                 }
                 ++busy;
             }
-            if (stop || GetTickCount64() > deadline) late = true;
-            else if (isFile) onFile(fj);
+            if (stop || GetTickCount64() > deadline) {
+                late = true;
+                if (notReached) {  // what the deadline left, for the answer to say where the rest is
+                    std::lock_guard lk(qm);
+                    if (notReached->size() < 200000) notReached->push_back(isFile ? ParentOf(fj.path) : dj.dir);
+                }
+            } else if (isFile) onFile(fj);
             else listDir(dj, newFiles, newDirs, newLater);
             bool wake;
             {
@@ -1603,7 +1609,8 @@ GrepResult RunGrep(const GrepQuery& q) {
                                   }
                                   searchFile(f);
                               }
-                          });
+                          },
+                          &res.notReached);
     }
     // the order a single walk would give: a folder's files, then its subfolders, by name
     std::sort(res.files.begin(), res.files.end(), [](const FileHits& a, const FileHits& b) { return WalkBefore(a.path, b.path); });

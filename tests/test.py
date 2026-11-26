@@ -807,6 +807,12 @@ code, out = cli("grep", {"pattern": "paint_supports", "path": os.path.join(ROOT,
 check("grep: a mesh bigger than the pieces it is read in, every match with its line",
       all('%d: <triangle v1="%d"' % (i + 4, i) in out for i in marks) and "3 matching lines" in out and "weren't read" not in out, out)
 
+# a walk the time budget ends says which folders it didn't reach (a big folder, the shortest budget: when this PC is
+# fast enough to search all of it in time, there is nothing to say)
+code, out = cli("grep", {"pattern": "qzqz never there", "path": os.environ["SystemRoot"], "time_budget_ms": 500, "documents": False}, via="--call")
+check("grep: stopped at the time budget, it names folders it didn't reach",
+      "stopped at the time budget" not in out or re.search(r"Not reached: [^.]+\.", out) is not None, out)
+
 # recent on every drive, further back than Seek has watched: the answer says first how to reach the rest
 code, out = cli("recent", {"query": "qqzzvvxxnothing", "since": "26w"}, via="--call")
 check("recent: asked before Seek watched, it says to give a folder as path", "Seek has watched the drives since" in out and "give a folder as path" in out, out)

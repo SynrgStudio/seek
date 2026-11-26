@@ -975,7 +975,7 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
                         (r.searched == 1 ? L" file" : L" files") + (r.picked ? L" named like the globs, from the index" : L"") + (r.docs ? L", " + Thousands(r.docs) + (r.docs == 1 ? L" of them a document" : L" of them documents") : L"") +
                         L" in " + Thousands(static_cast<uint64_t>(ms)) + L" ms" +
                         (r.fromMemory ? L", read from Seek's memory, not the drive"
-                         : ms > 1000 && (!r.picked || q.keepAfter) && HardDisk(q.root[0]) ? L", the first read from a hard disk: the next searches here come from memory"
+                         : ms > 1000 && (!r.picked || q.keepAfter) && HardDisk(q.root[0]) ? L", the first read from a hard disk: the folder is being read into memory for the next searches"
                          : ms > 1000 && HardDisk(q.root[0]) ? L", read from a hard disk"
                                                                          : L"") +
                         L").\n";
@@ -991,7 +991,29 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
         std::sort(kinds.begin(), kinds.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
         std::wstring most;
         for (size_t i = 0; i < kinds.size() && i < 4; ++i) most += (i ? L", *" : L"*") + kinds[i].second + L" " + Thousands(kinds[i].first);
-        const std::wstring how = L"Narrow path, or glob to the kind of file" + (most.empty() ? std::wstring() : L" (the most met: " + most + L")") +
+        // where the rest is: the folders the walk didn't reach, two levels below the path, the fullest first
+        std::unordered_map<std::wstring, std::pair<std::wstring, int>> left;
+        for (const std::wstring& d : r.notReached) {
+            std::wstring rel = Relative(d, q.root);
+            if (rel == L"." || rel == d) continue;
+            const size_t a = rel.find(L'\\'), b = a == std::wstring::npos ? a : rel.find(L'\\', a + 1);
+            if (b != std::wstring::npos) rel = rel.substr(0, b);
+            auto& x = left[Key(rel)];
+            x.first = rel;
+            ++x.second;
+        }
+        std::vector<std::pair<int, std::wstring>> rest;
+        for (const auto& [k, x] : left) rest.push_back({x.second, x.first});
+        std::sort(rest.begin(), rest.end(), [](const auto& x, const auto& y) { return x.first != y.first ? x.first > y.first : x.second < y.second; });
+        std::wstring notReached;
+        for (size_t i = 0; i < rest.size() && i < 5; ++i) notReached += (i ? L", " : L"") + rest[i].second;
+        if (rest.size() > 5) notReached += L", and " + Thousands(rest.size() - 5) + L" more";
+        const bool hard = HardDisk(q.root[0]) && !r.fromMemory;
+        const std::wstring how = (notReached.empty() ? std::wstring() : L"Not reached: " + notReached + L". ") +
+                                 (hard ? L"On a hard disk the first read of a folder is slow: a search again soon is faster, as Windows keeps "
+                                         L"what was read. "
+                                       : L"") +
+                                 L"Narrow path, or glob to the kind of file" + (most.empty() ? std::wstring() : L" (the most met: " + most + L")") +
                                  L", or raise time_budget_ms.\n";
         if (r.files.empty())  // said first: "0 matching lines" alone reads as none there
             head = L"grep \"" + q.pattern + L"\" in " + q.root + L": stopped at the time budget (" + budget + L") before finding a match, after " +
@@ -1000,6 +1022,10 @@ ToolOut ToolGrep(const Json& a, bool rows = false) {
         else
             tail += L"Stopped at the time budget (" + budget + L"): not everything was searched. " + how;
     }
+    // ignored: true on a folder that is itself left out: it was searched as asked without it, and kept in memory after
+    if (q.ignored && ms > 1000 && !isFile && (RepoIgnore().Check(q.root, true) || AnySegment(Key(q.root), std::vector<std::wstring>(JunkDirs().begin(), JunkDirs().end()))))
+        tail += L"(This folder is itself in what .gitignore leaves out, so it is searched without ignored too, and then kept in memory for the next "
+                L"searches; ignored: true also takes what is left out inside it, and isn't kept.)\n";
     if (!r.noFilter.empty()) {
         std::wstring kinds;
         int n = 0;
